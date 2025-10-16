@@ -38,14 +38,12 @@ pub fn create(seat: *Seat, wlr_keyboard: *wlr.Keyboard) !void {
     wlr_keyboard.events.key.add(&keyboard.key);
     wlr_keyboard.base.events.destroy.add(&keyboard.destroy);
 
-    seat.wlr_seat.setKeyboard(wlr_keyboard);
     seat.keyboards += 1;
 }
 
 fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Keyboard) void {
     const keyboard: *Self = @fieldParentPtr("modifiers", listener);
-    keyboard.seat.wlr_seat.setKeyboard(wlr_keyboard);
-    keyboard.seat.wlr_seat.keyboardNotifyModifiers(&wlr_keyboard.modifiers);
+    keyboard.seat.keyboardNotifyModifiers(wlr_keyboard);
 }
 
 fn handleKey(listener: *wl.Listener(*wlr.Keyboard.event.Key), event: *wlr.Keyboard.event.Key) void {
@@ -65,8 +63,7 @@ fn handleKey(listener: *wl.Listener(*wlr.Keyboard.event.Key), event: *wlr.Keyboa
     }
 
     if (!handled) {
-        self.seat.wlr_seat.setKeyboard(self.wlr_keyboard);
-        self.seat.wlr_seat.keyboardNotifyKey(event.time_msec, event.keycode, event.state);
+        self.seat.keyboardNotifyKey(self.wlr_keyboard, event);
     }
 }
 

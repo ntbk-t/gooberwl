@@ -17,7 +17,6 @@ on_request_set_selection: wl.Listener(*wlr.Seat.event.RequestSetSelection) = .in
 
 focused_toplevel: ?*Toplevel = null,
 keyboards: usize = 0,
-pointers: usize = 0,
 
 cursor: Cursor,
 
@@ -51,7 +50,6 @@ pub fn addInput(self: *Self, device: *wlr.InputDevice) void {
             return;
         },
         .pointer => {
-            self.pointers += 1;
             self.cursor.addInput(device);
         },
         else => {},
@@ -61,6 +59,40 @@ pub fn addInput(self: *Self, device: *wlr.InputDevice) void {
         .pointer = true,
         .keyboard = self.keyboards > 0,
     });
+}
+
+pub fn keyboardNotifyModifiers(self: Self, wlr_keyboard: *wlr.Keyboard) void {
+    self.wlr_seat.setKeyboard(wlr_keyboard);
+    self.wlr_seat.keyboardNotifyModifiers(&wlr_keyboard.modifiers);
+}
+
+pub fn keyboardNotifyKey(self: Self, wlr_keyboard: *wlr.Keyboard, event: *const wlr.Keyboard.event.Key) void {
+    self.wlr_seat.setKeyboard(wlr_keyboard);
+    self.wlr_seat.keyboardNotifyKey(event.time_msec, event.keycode, event.state);
+}
+
+pub fn pointerNotifyFrame(self: Self) void {
+    self.wlr_seat.pointerNotifyFrame();
+}
+pub fn pointerNotifyButton(self: Self, event: *const wlr.Pointer.event.Button) u32 {
+    return self.wlr_seat.pointerNotifyButton(event.time_msec, event.button, event.state);
+}
+pub fn pointerNotifyAxis(self: Self, event: *const wlr.Pointer.event.Axis) void {
+    return self.wlr_seat.pointerNotifyAxis(
+        event.time_msec,
+        event.orientation,
+        event.delta,
+        event.delta_discrete,
+        event.source,
+        event.relative_direction,
+    );
+}
+pub fn pointerNotifyEnter(self: Self, surface: *wlr.Surface, x: f64, y: f64, time_msec: u32) void {
+    self.wlr_seat.pointerNotifyEnter(surface, x, y);
+    self.wlr_seat.pointerNotifyMotion(time_msec, x, y);
+}
+pub fn pointerNotifyExit(self: Self) void {
+    self.wlr_seat.pointerClearFocus();
 }
 
 fn requestSetCursor(

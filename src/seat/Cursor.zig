@@ -75,7 +75,7 @@ fn onButton(
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    const serial = seat.wlr_seat.pointerNotifyButton(event.time_msec, event.button, event.state);
+    const serial = seat.pointerNotifyButton(event);
     switch (event.state) {
         .pressed => {
             self.click_serial = serial;
@@ -100,23 +100,12 @@ fn onAxis(
     event: *wlr.Pointer.event.Axis,
 ) void {
     const self: *Self = @fieldParentPtr("on_axis", listener);
-    const seat = self.getSeat();
-
-    seat.wlr_seat.pointerNotifyAxis(
-        event.time_msec,
-        event.orientation,
-        event.delta,
-        event.delta_discrete,
-        event.source,
-        event.relative_direction,
-    );
+    self.getSeat().pointerNotifyAxis(event);
 }
 
 fn onFrame(listener: *wl.Listener(*wlr.Cursor), _: *wlr.Cursor) void {
     const self: *Self = @fieldParentPtr("on_frame", listener);
-    const seat = self.getSeat();
-
-    seat.wlr_seat.pointerNotifyFrame();
+    self.getSeat().pointerNotifyFrame();
 }
 
 fn processMotion(self: *Self, time_msec: u32) void {
@@ -142,11 +131,10 @@ fn processPassthrough(self: *Self, time_msec: u32) void {
     const server = seat.getServer();
 
     if (server.viewAt(self.wlr_cursor.x, self.wlr_cursor.y)) |res| {
-        seat.wlr_seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
-        seat.wlr_seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
+        seat.pointerNotifyEnter(res.surface, res.sx, res.sy, time_msec);
     } else {
         self.wlr_cursor.setXcursor(server.cursor_mgr, "default");
-        seat.wlr_seat.pointerClearFocus();
+        seat.pointerNotifyExit();
     }
 }
 
