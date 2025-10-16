@@ -8,45 +8,30 @@ const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 const xkb = @import("xkbcommon");
 
-const Keyboard = @import("Keyboard.zig");
+const Keyboard = @import("seat/Keyboard.zig");
 const Output = @import("Output.zig");
 const Popup = @import("Popup.zig");
 const Toplevel = @import("Toplevel.zig");
 const Workspace = @import("Workspace.zig");
+const Seat = @import("seat/Seat.zig");
 
 wl_server: *wl.Server,
 backend: *wlr.Backend,
 renderer: *wlr.Renderer,
 allocator: *wlr.Allocator,
 scene: *wlr.Scene,
-
 output_layout: *wlr.OutputLayout,
 scene_output_layout: *wlr.SceneOutputLayout,
-new_output: wl.Listener(*wlr.Output) = .init(newOutput),
-
 xdg_shell: *wlr.XdgShell,
-new_xdg_toplevel: wl.Listener(*wlr.XdgToplevel) = .init(newXdgToplevel),
-new_xdg_popup: wl.Listener(*wlr.XdgPopup) = .init(newXdgPopup),
+
 toplevels: std.ArrayList(*Toplevel) = .empty,
-
-seat: *wlr.Seat,
-new_input: wl.Listener(*wlr.InputDevice) = .init(newInput),
-request_set_cursor: wl.Listener(*wlr.Seat.event.RequestSetCursor) = .init(requestSetCursor),
-request_set_selection: wl.Listener(*wlr.Seat.event.RequestSetSelection) = .init(requestSetSelection),
-keyboards: wl.list.Head(Keyboard, .link) = undefined,
-
-cursor: *wlr.Cursor,
+seat: Seat,
 cursor_mgr: *wlr.XcursorManager,
-cursor_motion: wl.Listener(*wlr.Pointer.event.Motion) = .init(cursorMotion),
-cursor_motion_absolute: wl.Listener(*wlr.Pointer.event.MotionAbsolute) = .init(cursorMotionAbsolute),
-cursor_button: wl.Listener(*wlr.Pointer.event.Button) = .init(cursorButton),
-cursor_axis: wl.Listener(*wlr.Pointer.event.Axis) = .init(cursorAxis),
-cursor_frame: wl.Listener(*wlr.Cursor) = .init(cursorFrame),
 
-focused_toplevel: ?*Toplevel = null,
-cursor_mode: enum { passthrough, move, resize } = .passthrough,
-resize_edges: wlr.Edges = .{},
-click_serial: u32 = 0,
+on_new_input: wl.Listener(*wlr.InputDevice) = .init(newInput),
+on_new_output: wl.Listener(*wlr.Output) = .init(newOutput),
+on_new_xdg_toplevel: wl.Listener(*wlr.XdgToplevel) = .init(newXdgToplevel),
+on_new_xdg_popup: wl.Listener(*wlr.XdgPopup) = .init(newXdgPopup),
 
 workspaces: [10]Workspace = @splat(.{}),
 active_workspace: u8,
@@ -54,79 +39,70 @@ active_workspace: u8,
 socket_buf: [11]u8,
 socket_name: [:0]const u8,
 
-pub fn init(self: *Self) !void {
+pub fn init() !Self {
     const wl_server = try wl.Server.create();
-    const loop = wl_server.getEventLoop();
-    const backend = try wlr.Backend.autocreate(loop, null);
+    const backend = try wlr.Backend.autocreate(wl_server.getEventLoop(), null);
     const renderer = try wlr.Renderer.autocreate(backend);
     const output_layout = try wlr.OutputLayout.create(wl_server);
     const scene = try wlr.Scene.create();
-    self.* = .{
+    return .{
         .wl_server = wl_server,
         .backend = backend,
         .renderer = renderer,
-        .allocator = try wlr.Allocator.autocreate(backend, renderer),
+        .allocator = try .autocreate(backend, renderer),
         .scene = scene,
         .output_layout = output_layout,
         .scene_output_layout = try scene.attachOutputLayout(output_layout),
-        .xdg_shell = try wlr.XdgShell.create(wl_server, 2),
-        .seat = try wlr.Seat.create(wl_server, "default"),
-        .cursor = try wlr.Cursor.create(),
-        .cursor_mgr = try wlr.XcursorManager.create(null, 24),
+        .xdg_shell = try .create(wl_server, 2),
+        .seat = try .init(wl_server, "default"),
+        .cursor_mgr = try .create(null, 24),
         .socket_buf = undefined,
         .socket_name = undefined,
         .active_workspace = 0,
     };
+}
 
-    try self.renderer.initServer(wl_server);
+pub fn start(self: *Self) !void {
+    try self.renderer.initServer(self.wl_server);
 
     _ = try wlr.Compositor.create(self.wl_server, 6, self.renderer);
     _ = try wlr.Subcompositor.create(self.wl_server);
     _ = try wlr.DataDeviceManager.create(self.wl_server);
 
-    self.backend.events.new_output.add(&self.new_output);
+    self.backend.events.new_input.add(&self.on_new_input);
+    self.backend.events.new_output.add(&self.on_new_output);
 
-    self.xdg_shell.events.new_toplevel.add(&self.new_xdg_toplevel);
-    self.xdg_shell.events.new_popup.add(&self.new_xdg_popup);
+    self.xdg_shell.events.new_toplevel.add(&self.on_new_xdg_toplevel);
+    self.xdg_shell.events.new_popup.add(&self.on_new_xdg_popup);
 
-    self.backend.events.new_input.add(&self.new_input);
-    self.seat.events.request_set_cursor.add(&self.request_set_cursor);
-    self.seat.events.request_set_selection.add(&self.request_set_selection);
-    self.keyboards.init();
+    self.seat.start();
 
-    self.cursor.attachOutputLayout(self.output_layout);
+    self.seat.cursor.wlr_cursor.attachOutputLayout(self.output_layout);
     try self.cursor_mgr.load(1);
-    self.cursor.events.motion.add(&self.cursor_motion);
-    self.cursor.events.motion_absolute.add(&self.cursor_motion_absolute);
-    self.cursor.events.button.add(&self.cursor_button);
-    self.cursor.events.axis.add(&self.cursor_axis);
-    self.cursor.events.frame.add(&self.cursor_frame);
 
     self.socket_name = try self.wl_server.addSocketAuto(&self.socket_buf);
+
+    try self.backend.start();
+    self.wl_server.run();
 }
 
 pub fn deinit(self: *Self) void {
     self.wl_server.destroyClients();
 
-    self.new_input.link.remove();
-    self.new_output.link.remove();
+    self.on_new_input.link.remove();
+    self.on_new_output.link.remove();
 
-    self.new_xdg_toplevel.link.remove();
-    self.new_xdg_popup.link.remove();
-    self.request_set_cursor.link.remove();
-    self.request_set_selection.link.remove();
-    self.cursor_motion.link.remove();
-    self.cursor_motion_absolute.link.remove();
-    self.cursor_button.link.remove();
-    self.cursor_axis.link.remove();
-    self.cursor_frame.link.remove();
+    self.on_new_xdg_toplevel.link.remove();
+    self.on_new_xdg_popup.link.remove();
+
+    self.seat.deinit();
 
     self.backend.destroy();
     self.wl_server.destroy();
 }
 
 fn newOutput(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
-    const self: *Self = @fieldParentPtr("new_output", listener);
+    const self: *Self = @fieldParentPtr("on_new_output", listener);
 
     Output.create(self, wlr_output) catch {
         std.log.err("failed to allocate new output", .{});
@@ -136,62 +112,17 @@ fn newOutput(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void 
 }
 
 fn newXdgToplevel(listener: *wl.Listener(*wlr.XdgToplevel), xdg_toplevel: *wlr.XdgToplevel) void {
-    const self: *Self = @fieldParentPtr("new_xdg_toplevel", listener);
-    const xdg_surface = xdg_toplevel.base;
+    const self: *Self = @fieldParentPtr("on_new_xdg_toplevel", listener);
 
-    // Don't add the toplevel to self.toplevels until it is mapped
-    const toplevel = gpa.create(Toplevel) catch {
-        std.log.err("failed to allocate new toplevel", .{});
-        return;
+    Toplevel.create(self, xdg_toplevel) catch {
+        xdg_toplevel.sendClose();
     };
-
-    toplevel.* = .{
-        .server = self,
-        .xdg_toplevel = xdg_toplevel,
-        .scene_tree = self.scene.tree.createSceneXdgSurface(xdg_surface) catch {
-            gpa.destroy(toplevel);
-            std.log.err("failed to allocate new toplevel", .{});
-            return;
-        },
-        .workspace_id = self.active_workspace,
-    };
-    toplevel.scene_tree.node.data = toplevel;
-    xdg_surface.data = toplevel.scene_tree;
-
-    xdg_surface.surface.events.commit.add(&toplevel.commit);
-    xdg_surface.surface.events.map.add(&toplevel.map);
-    xdg_surface.surface.events.unmap.add(&toplevel.unmap);
-    xdg_toplevel.events.destroy.add(&toplevel.destroy);
-    xdg_toplevel.events.request_move.add(&toplevel.request_move);
-    xdg_toplevel.events.request_resize.add(&toplevel.request_resize);
 }
 
 fn newXdgPopup(_: *wl.Listener(*wlr.XdgPopup), xdg_popup: *wlr.XdgPopup) void {
-    const xdg_surface = xdg_popup.base;
-
-    // These asserts are fine since tinywl.zig doesn't support anything else that can
-    // make xdg popups (e.g. layer shell).
-    const parent = wlr.XdgSurface.tryFromWlrSurface(xdg_popup.parent.?) orelse return;
-    const parent_tree = @as(?*wlr.SceneTree, @ptrCast(@alignCast(parent.data))) orelse {
-        // The xdg surface user data could be left null due to allocation failure.
-        return;
+    Popup.create(xdg_popup) catch {
+        xdg_popup.destroy();
     };
-    const scene_tree = parent_tree.createSceneXdgSurface(xdg_surface) catch {
-        std.log.err("failed to allocate xdg popup node", .{});
-        return;
-    };
-    xdg_surface.data = scene_tree;
-
-    const popup = gpa.create(Popup) catch {
-        std.log.err("failed to allocate new popup", .{});
-        return;
-    };
-    popup.* = .{
-        .xdg_popup = xdg_popup,
-    };
-
-    xdg_surface.surface.events.commit.add(&popup.commit);
-    xdg_popup.events.destroy.add(&popup.destroy);
 }
 
 const ViewAtResult = struct {
@@ -201,7 +132,7 @@ const ViewAtResult = struct {
     sy: f64,
 };
 
-fn viewAt(self: *Self, lx: f64, ly: f64) ?ViewAtResult {
+pub fn viewAt(self: *Self, lx: f64, ly: f64) ?ViewAtResult {
     var sx: f64 = undefined;
     var sy: f64 = undefined;
     if (self.scene.tree.node.at(lx, ly, &sx, &sy)) |node| {
@@ -227,22 +158,22 @@ fn viewAt(self: *Self, lx: f64, ly: f64) ?ViewAtResult {
 pub fn focusView(self: *Self, toplevel: *Toplevel) void {
     const surface = toplevel.xdg_toplevel.base.surface;
 
-    if (self.seat.keyboard_state.focused_surface) |previous_surface| {
+    if (self.seat.wlr_seat.keyboard_state.focused_surface) |previous_surface| {
         if (previous_surface == surface) return;
         if (wlr.XdgSurface.tryFromWlrSurface(previous_surface)) |xdg_surface| {
             _ = xdg_surface.role_data.toplevel.?.setActivated(false);
         }
     }
 
-    if (self.focused_toplevel) |focused_toplevel| {
+    if (self.seat.focused_toplevel) |focused_toplevel| {
         _ = focused_toplevel.xdg_toplevel.setActivated(false);
     }
 
     _ = toplevel.xdg_toplevel.setActivated(true);
-    self.focused_toplevel = toplevel;
+    self.seat.focused_toplevel = toplevel;
 
-    const wlr_keyboard = self.seat.getKeyboard() orelse return;
-    self.seat.keyboardNotifyEnter(
+    const wlr_keyboard = self.seat.wlr_seat.getKeyboard() orelse return;
+    self.seat.wlr_seat.keyboardNotifyEnter(
         surface,
         wlr_keyboard.keycodes[0..wlr_keyboard.num_keycodes],
         &wlr_keyboard.modifiers,
@@ -250,161 +181,8 @@ pub fn focusView(self: *Self, toplevel: *Toplevel) void {
 }
 
 fn newInput(listener: *wl.Listener(*wlr.InputDevice), device: *wlr.InputDevice) void {
-    const self: *Self = @fieldParentPtr("new_input", listener);
-    switch (device.type) {
-        .keyboard => Keyboard.create(self, device) catch |err| {
-            std.log.err("failed to create keyboard: {}", .{err});
-            return;
-        },
-        .pointer => self.cursor.attachInputDevice(device),
-        else => {},
-    }
-
-    self.seat.setCapabilities(.{
-        .pointer = true,
-        .keyboard = self.keyboards.length() > 0,
-    });
-}
-
-fn requestSetCursor(
-    listener: *wl.Listener(*wlr.Seat.event.RequestSetCursor),
-    event: *wlr.Seat.event.RequestSetCursor,
-) void {
-    const self: *Self = @fieldParentPtr("request_set_cursor", listener);
-    if (event.seat_client == self.seat.pointer_state.focused_client)
-        self.cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
-}
-
-fn requestSetSelection(
-    listener: *wl.Listener(*wlr.Seat.event.RequestSetSelection),
-    event: *wlr.Seat.event.RequestSetSelection,
-) void {
-    const self: *Self = @fieldParentPtr("request_set_selection", listener);
-    self.seat.setSelection(event.source, event.serial);
-}
-
-fn cursorMotion(
-    listener: *wl.Listener(*wlr.Pointer.event.Motion),
-    event: *wlr.Pointer.event.Motion,
-) void {
-    const self: *Self = @fieldParentPtr("cursor_motion", listener);
-    self.cursor.move(event.device, event.delta_x, event.delta_y);
-    self.processCursorMotion(event.time_msec);
-}
-
-fn cursorMotionAbsolute(
-    listener: *wl.Listener(*wlr.Pointer.event.MotionAbsolute),
-    event: *wlr.Pointer.event.MotionAbsolute,
-) void {
-    const self: *Self = @fieldParentPtr("cursor_motion_absolute", listener);
-    self.cursor.warpAbsolute(event.device, event.x, event.y);
-    self.processCursorMotion(event.time_msec);
-}
-
-fn processCursorMotion(self: *Self, time_msec: u32) void {
-    switch (self.cursor_mode) {
-        .passthrough => self.processPassthrough(time_msec),
-        .resize => self.processResize(),
-        .move => {},
-    }
-}
-
-fn processPassthrough(self: *Self, time_msec: u32) void {
-    if (self.viewAt(self.cursor.x, self.cursor.y)) |res| {
-        self.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
-        self.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
-    } else {
-        self.cursor.setXcursor(self.cursor_mgr, "default");
-        self.seat.pointerClearFocus();
-    }
-}
-
-fn processResize(self: *Self) void {
-    const toplevel = self.focused_toplevel orelse {
-        std.log.warn("cursor mode set to resize, but no toplevel is focused!", .{});
-        self.cursor_mode = .passthrough;
-        return;
-    };
-
-    const output = self.output_layout.outputAt(self.cursor.x, self.cursor.y) orelse return;
-    var layout_dirty = false;
-
-    if ((toplevel.index != 0 and self.resize_edges.left) or
-        (toplevel.index == 0 and self.resize_edges.right))
-    {
-        toplevel.getWorkspace().horizontal_ratio = self.cursor.x / @as(f64, @floatFromInt(output.width));
-        layout_dirty = true;
-    }
-
-    if (toplevel.index > 1 and self.resize_edges.top) {
-        const prev = toplevel.getWorkspace().toplevels.items[toplevel.index - 1];
-        prev.getWorkspace().resizeTile(prev, self.cursor.y);
-        layout_dirty = true;
-    }
-
-    if (toplevel.index != 0 and
-        toplevel.index != self.toplevels.items.len - 1 and
-        self.resize_edges.bottom)
-    {
-        toplevel.getWorkspace().resizeTile(toplevel, self.cursor.y);
-        layout_dirty = true;
-    }
-
-    if (layout_dirty == true) {
-        self.applyWorkspaceLayout(toplevel.workspace_id);
-    }
-}
-
-fn cursorButton(
-    listener: *wl.Listener(*wlr.Pointer.event.Button),
-    event: *wlr.Pointer.event.Button,
-) void {
-    const self: *Self = @fieldParentPtr("cursor_button", listener);
-    const serial = self.seat.pointerNotifyButton(event.time_msec, event.button, event.state);
-    switch (event.state) {
-        .pressed => {
-            self.click_serial = serial;
-            if (self.viewAt(self.cursor.x, self.cursor.y)) |res| {
-                self.focusView(res.toplevel);
-            }
-        },
-        .released => {
-            switch (self.cursor_mode) {
-                .passthrough => {},
-                .move => self.processMove(),
-                .resize => self.cursor_mode = .passthrough,
-            }
-            self.cursor_mode = .passthrough;
-        },
-        _ => {},
-    }
-}
-
-fn processMove(self: *Self) void {
-    const focused = self.focused_toplevel orelse return;
-    const view_at = self.viewAt(self.cursor.x, self.cursor.y) orelse return;
-
-    focused.getWorkspace().swapTiles(focused, view_at.toplevel);
-}
-
-fn cursorAxis(
-    listener: *wl.Listener(*wlr.Pointer.event.Axis),
-    event: *wlr.Pointer.event.Axis,
-) void {
-    const self: *Self = @fieldParentPtr("cursor_axis", listener);
-    self.seat.pointerNotifyAxis(
-        event.time_msec,
-        event.orientation,
-        event.delta,
-        event.delta_discrete,
-        event.source,
-        event.relative_direction,
-    );
-}
-
-fn cursorFrame(listener: *wl.Listener(*wlr.Cursor), _: *wlr.Cursor) void {
-    const self: *Self = @fieldParentPtr("cursor_frame", listener);
-    self.seat.pointerNotifyFrame();
+    const self: *Self = @fieldParentPtr("on_new_input", listener);
+    self.seat.addInput(device);
 }
 
 pub fn getWorkspace(self: *Self, id: u8) *Workspace {

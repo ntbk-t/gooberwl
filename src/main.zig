@@ -14,10 +14,7 @@ const Toplevel = @import("Toplevel.zig");
 pub fn main() anyerror!void {
     wlr.log.init(.debug, null);
 
-    var server: Server = undefined;
-    try server.init();
+    var server: Server = try .init();
     defer server.deinit();
-
-    try server.backend.start();
-    server.wl_server.run();
+    try server.start();
 }

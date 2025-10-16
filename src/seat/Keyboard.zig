@@ -1,4 +1,4 @@
-const Keyboard = @This();
+const Self = @This();
 
 const std = @import("std");
 const gpa = std.heap.c_allocator;
@@ -7,23 +7,23 @@ const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 const xkb = @import("xkbcommon");
 
-const Server = @import("Server.zig");
+const Seat = @import("Seat.zig");
+const Server = @import("../Server.zig");
 
-server: *Server,
-link: wl.list.Link = undefined,
-device: *wlr.InputDevice,
+wlr_keyboard: *wlr.Keyboard,
+seat: *Seat,
 
 modifiers: wl.Listener(*wlr.Keyboard) = .init(handleModifiers),
 key: wl.Listener(*wlr.Keyboard.event.Key) = .init(handleKey),
 destroy: wl.Listener(*wlr.InputDevice) = .init(handleDestroy),
 
-pub fn create(server: *Server, device: *wlr.InputDevice) !void {
-    const keyboard = try gpa.create(Keyboard);
+pub fn create(seat: *Seat, wlr_keyboard: *wlr.Keyboard) !void {
+    const keyboard = try gpa.create(Self);
     errdefer gpa.destroy(keyboard);
 
     keyboard.* = .{
-        .server = server,
-        .device = device,
+        .wlr_keyboard = wlr_keyboard,
+        .seat = seat,
     };
 
     const context = xkb.Context.new(.no_flags) orelse return error.ContextFailed;
@@ -31,35 +31,33 @@ pub fn create(server: *Server, device: *wlr.InputDevice) !void {
     const keymap = xkb.Keymap.newFromNames(context, null, .no_flags) orelse return error.KeymapFailed;
     defer keymap.unref();
 
-    const wlr_keyboard = device.toKeyboard();
     if (!wlr_keyboard.setKeymap(keymap)) return error.SetKeymapFailed;
     wlr_keyboard.setRepeatInfo(25, 600);
 
     wlr_keyboard.events.modifiers.add(&keyboard.modifiers);
     wlr_keyboard.events.key.add(&keyboard.key);
-    device.events.destroy.add(&keyboard.destroy);
+    wlr_keyboard.base.events.destroy.add(&keyboard.destroy);
 
-    server.seat.setKeyboard(wlr_keyboard);
-    server.keyboards.append(keyboard);
+    seat.wlr_seat.setKeyboard(wlr_keyboard);
+    seat.keyboards += 1;
 }
 
 fn handleModifiers(listener: *wl.Listener(*wlr.Keyboard), wlr_keyboard: *wlr.Keyboard) void {
-    const keyboard: *Keyboard = @fieldParentPtr("modifiers", listener);
-    keyboard.server.seat.setKeyboard(wlr_keyboard);
-    keyboard.server.seat.keyboardNotifyModifiers(&wlr_keyboard.modifiers);
+    const keyboard: *Self = @fieldParentPtr("modifiers", listener);
+    keyboard.seat.wlr_seat.setKeyboard(wlr_keyboard);
+    keyboard.seat.wlr_seat.keyboardNotifyModifiers(&wlr_keyboard.modifiers);
 }
 
 fn handleKey(listener: *wl.Listener(*wlr.Keyboard.event.Key), event: *wlr.Keyboard.event.Key) void {
-    const keyboard: *Keyboard = @fieldParentPtr("key", listener);
-    const wlr_keyboard = keyboard.device.toKeyboard();
+    const self: *Self = @fieldParentPtr("key", listener);
 
     // Translate libinput keycode -> xkbcommon
     const keycode = event.keycode + 8;
 
     var handled = false;
-    if (wlr_keyboard.getModifiers().alt and event.state == .pressed) {
-        for (wlr_keyboard.xkb_state.?.keyGetSyms(keycode)) |sym| {
-            if (keyboard.server.handleKeybind(sym)) {
+    if (self.wlr_keyboard.getModifiers().alt and event.state == .pressed) {
+        for (self.wlr_keyboard.xkb_state.?.keyGetSyms(keycode)) |sym| {
+            if (self.seat.getServer().handleKeybind(sym)) {
                 handled = true;
                 break;
             }
@@ -67,19 +65,17 @@ fn handleKey(listener: *wl.Listener(*wlr.Keyboard.event.Key), event: *wlr.Keyboa
     }
 
     if (!handled) {
-        keyboard.server.seat.setKeyboard(wlr_keyboard);
-        keyboard.server.seat.keyboardNotifyKey(event.time_msec, event.keycode, event.state);
+        self.seat.wlr_seat.setKeyboard(self.wlr_keyboard);
+        self.seat.wlr_seat.keyboardNotifyKey(event.time_msec, event.keycode, event.state);
     }
 }
 
 fn handleDestroy(listener: *wl.Listener(*wlr.InputDevice), _: *wlr.InputDevice) void {
-    const keyboard: *Keyboard = @fieldParentPtr("destroy", listener);
+    const self: *Self = @fieldParentPtr("destroy", listener);
 
-    keyboard.link.remove();
+    self.modifiers.link.remove();
+    self.key.link.remove();
+    self.destroy.link.remove();
 
-    keyboard.modifiers.link.remove();
-    keyboard.key.link.remove();
-    keyboard.destroy.link.remove();
-
-    gpa.destroy(keyboard);
+    gpa.destroy(self);
 }
