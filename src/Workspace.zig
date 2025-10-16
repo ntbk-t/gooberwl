@@ -58,6 +58,7 @@ pub fn removeTile(self: *Self, to_remove: *Toplevel) void {
 }
 
 pub fn resizeTile(self: Self, toplevel: *Toplevel, to_y: f64) void {
+    const next = self.toplevels.items[toplevel.index + 1];
     const top: f64 = @floatFromInt(toplevel.scene_tree.node.y);
     const bottom = top + @as(
         f64,
@@ -67,13 +68,7 @@ pub fn resizeTile(self: Self, toplevel: *Toplevel, to_y: f64) void {
     const resize_by = (to_y - bottom) * self.total_scale / @as(f64, @floatFromInt(self.height));
 
     toplevel.scale += resize_by;
-
-    const remaining_toplevels = self.toplevels.items[toplevel.index + 1 ..];
-    const resize_part = resize_by / @as(f64, @floatFromInt(remaining_toplevels.len));
-
-    for (remaining_toplevels) |tl| {
-        tl.scale -= resize_part;
-    }
+    next.scale -= resize_by;
 }
 
 pub fn applyLayout(self: Self) void {
