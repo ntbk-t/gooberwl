@@ -22,6 +22,7 @@ pub fn len(self: Self) usize {
 pub fn resize(self: *Self, width: i32, height: i32) void {
     self.width = width;
     self.height = height;
+    self.applyLayout();
 }
 
 pub fn appendTile(self: *Self, toplevel: *Toplevel) !void {
@@ -57,6 +58,23 @@ pub fn removeTile(self: *Self, to_remove: *Toplevel) void {
     _ = self.toplevels.shrinkRetainingCapacity(self.len() - 1);
 }
 
+pub fn swapTiles(self: Self, a: *Toplevel, b: *Toplevel) void {
+    if (a == b) return;
+
+    const a_index = a.index;
+    const b_index = b.index;
+    a.index = b_index;
+    b.index = a_index;
+
+    const a_scale = a.scale;
+    const b_scale = b.scale;
+    a.scale = b_scale;
+    b.scale = a_scale;
+
+    self.toplevels.items[a.index] = a;
+    self.toplevels.items[b.index] = b;
+}
+
 pub fn resizeTile(self: Self, toplevel: *Toplevel, to_y: f64) void {
     const next = self.toplevels.items[toplevel.index + 1];
     const top: f64 = @floatFromInt(toplevel.scene_tree.node.y);
@@ -71,6 +89,13 @@ pub fn resizeTile(self: Self, toplevel: *Toplevel, to_y: f64) void {
     next.scale -= resize_by;
 }
 
+pub fn hide(self: Self) void {
+    for (self.toplevels.items) |toplevel| {
+        toplevel.setSize(0, 0);
+        toplevel.scene_tree.node.setEnabled(false);
+    }
+}
+
 pub fn applyLayout(self: Self) void {
     const toplevels = self.toplevels.items;
 
@@ -83,6 +108,7 @@ pub fn applyLayout(self: Self) void {
         std.debug.assert(toplevel.index == 0);
 
         toplevel.setRect(0, 0, self.width, self.height);
+        toplevel.scene_tree.node.setEnabled(true);
         return;
     }
 
@@ -96,6 +122,7 @@ pub fn applyLayout(self: Self) void {
 
     const primary_toplevel = toplevels[0];
     std.debug.assert(primary_toplevel.index == 0);
+    primary_toplevel.scene_tree.node.setEnabled(true);
     primary_toplevel.setRect(
         primary_x,
         primary_y,
@@ -110,6 +137,8 @@ pub fn applyLayout(self: Self) void {
 
     var secondary_y: i32 = 0;
     for (secondary_toplevels, 0..) |toplevel, i| {
+        toplevel.scene_tree.node.setEnabled(true);
+
         std.debug.assert(toplevel.index == i + 1);
 
         const scale = toplevel.scale / self.total_scale;

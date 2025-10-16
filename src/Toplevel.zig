@@ -7,6 +7,7 @@ const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 
 const Server = @import("Server.zig");
+const Workspace = @import("Workspace.zig");
 
 server: *Server,
 xdg_toplevel: *wlr.XdgToplevel,
@@ -18,19 +19,28 @@ destroy: wl.Listener(void) = .init(handleDestroy),
 request_move: wl.Listener(*wlr.XdgToplevel.event.Move) = .init(handleRequestMove),
 request_resize: wl.Listener(*wlr.XdgToplevel.event.Resize) = .init(handleRequestResize),
 
+workspace_id: u8,
 index: usize = 0,
 scale: f64 = 0.0,
 
-pub fn setScale(self: *Self, scale: f64) void {
-    self.server.workspace.total_scale -= self.scale;
+pub fn getWorkspace(self: *Self) *Workspace {
+    return self.server.getWorkspace(self.workspace_id);
+}
 
-    self.scale = scale;
-    self.server.workspace.total_scale += self.scale;
+pub fn setSize(self: *Self, width: i32, height: i32) void {
+    if (width < 0 or height < 0) {
+        @branchHint(.cold);
+        std.log.warn("tried to set window to negative size!", .{});
+        _ = self.xdg_toplevel.setSize(0, 0);
+        return;
+    }
+
+    _ = self.xdg_toplevel.setSize(width, height);
 }
 
 pub fn setRect(self: *Self, x: i32, y: i32, width: i32, height: i32) void {
     self.scene_tree.node.setPosition(x, y);
-    _ = self.xdg_toplevel.setSize(@intCast(width), @intCast(height));
+    self.setSize(width, height);
 }
 
 fn handleCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
@@ -54,10 +64,10 @@ fn handleMap(listener: *wl.Listener(void)) void {
     self.server.focusView(self);
     self.scene_tree.node.lowerToBottom();
 
-    server.workspace.appendTile(self) catch |err| {
+    server.getActiveWorkspace().appendTile(self) catch |err| {
         std.log.err("failed to append toplevel! (err: {})", .{err});
     };
-    server.workspace.applyLayout();
+    server.applyWorkspaceLayout(self.workspace_id);
 }
 
 fn handleUnmap(listener: *wl.Listener(void)) void {
@@ -66,8 +76,8 @@ fn handleUnmap(listener: *wl.Listener(void)) void {
     if (self == self.server.focused_toplevel) {
         self.server.focused_toplevel = null;
     }
-    self.server.workspace.removeTile(self);
-    self.server.workspace.applyLayout();
+    self.getWorkspace().removeTile(self);
+    self.server.applyWorkspaceLayout(self.workspace_id);
 }
 
 fn handleDestroy(listener: *wl.Listener(void)) void {
@@ -88,10 +98,11 @@ fn handleDestroy(listener: *wl.Listener(void)) void {
 }
 
 fn handleRequestMove(
-    _: *wl.Listener(*wlr.XdgToplevel.event.Move),
+    listener: *wl.Listener(*wlr.XdgToplevel.event.Move),
     _: *wlr.XdgToplevel.event.Move,
 ) void {
-    // TODO
+    const self: *Self = @fieldParentPtr("request_move", listener);
+    self.server.cursor_mode = .move;
 }
 
 fn handleRequestResize(

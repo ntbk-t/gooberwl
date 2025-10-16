@@ -44,23 +44,24 @@ cursor_axis: wl.Listener(*wlr.Pointer.event.Axis) = .init(cursorAxis),
 cursor_frame: wl.Listener(*wlr.Cursor) = .init(cursorFrame),
 
 focused_toplevel: ?*Toplevel = null,
-cursor_mode: enum { passthrough, resize } = .passthrough,
+cursor_mode: enum { passthrough, move, resize } = .passthrough,
 resize_edges: wlr.Edges = .{},
 click_serial: u32 = 0,
 
-workspace: Workspace,
+workspaces: [10]Workspace = @splat(.{}),
+active_workspace: u8,
 
 socket_buf: [11]u8,
 socket_name: [:0]const u8,
 
-pub fn init(server: *Self) !void {
+pub fn init(self: *Self) !void {
     const wl_server = try wl.Server.create();
     const loop = wl_server.getEventLoop();
     const backend = try wlr.Backend.autocreate(loop, null);
     const renderer = try wlr.Renderer.autocreate(backend);
     const output_layout = try wlr.OutputLayout.create(wl_server);
     const scene = try wlr.Scene.create();
-    server.* = .{
+    self.* = .{
         .wl_server = wl_server,
         .backend = backend,
         .renderer = renderer,
@@ -74,71 +75,60 @@ pub fn init(server: *Self) !void {
         .cursor_mgr = try wlr.XcursorManager.create(null, 24),
         .socket_buf = undefined,
         .socket_name = undefined,
-        .workspace = .{},
+        .active_workspace = 0,
     };
 
-    try server.renderer.initServer(wl_server);
+    try self.renderer.initServer(wl_server);
 
-    _ = try wlr.Compositor.create(server.wl_server, 6, server.renderer);
-    _ = try wlr.Subcompositor.create(server.wl_server);
-    _ = try wlr.DataDeviceManager.create(server.wl_server);
+    _ = try wlr.Compositor.create(self.wl_server, 6, self.renderer);
+    _ = try wlr.Subcompositor.create(self.wl_server);
+    _ = try wlr.DataDeviceManager.create(self.wl_server);
 
-    server.backend.events.new_output.add(&server.new_output);
+    self.backend.events.new_output.add(&self.new_output);
 
-    server.xdg_shell.events.new_toplevel.add(&server.new_xdg_toplevel);
-    server.xdg_shell.events.new_popup.add(&server.new_xdg_popup);
+    self.xdg_shell.events.new_toplevel.add(&self.new_xdg_toplevel);
+    self.xdg_shell.events.new_popup.add(&self.new_xdg_popup);
 
-    server.backend.events.new_input.add(&server.new_input);
-    server.seat.events.request_set_cursor.add(&server.request_set_cursor);
-    server.seat.events.request_set_selection.add(&server.request_set_selection);
-    server.keyboards.init();
+    self.backend.events.new_input.add(&self.new_input);
+    self.seat.events.request_set_cursor.add(&self.request_set_cursor);
+    self.seat.events.request_set_selection.add(&self.request_set_selection);
+    self.keyboards.init();
 
-    server.cursor.attachOutputLayout(server.output_layout);
-    try server.cursor_mgr.load(1);
-    server.cursor.events.motion.add(&server.cursor_motion);
-    server.cursor.events.motion_absolute.add(&server.cursor_motion_absolute);
-    server.cursor.events.button.add(&server.cursor_button);
-    server.cursor.events.axis.add(&server.cursor_axis);
-    server.cursor.events.frame.add(&server.cursor_frame);
+    self.cursor.attachOutputLayout(self.output_layout);
+    try self.cursor_mgr.load(1);
+    self.cursor.events.motion.add(&self.cursor_motion);
+    self.cursor.events.motion_absolute.add(&self.cursor_motion_absolute);
+    self.cursor.events.button.add(&self.cursor_button);
+    self.cursor.events.axis.add(&self.cursor_axis);
+    self.cursor.events.frame.add(&self.cursor_frame);
 
-    server.socket_name = try server.wl_server.addSocketAuto(&server.socket_buf);
+    self.socket_name = try self.wl_server.addSocketAuto(&self.socket_buf);
 }
 
-pub fn deinit(server: *Self) void {
-    server.wl_server.destroyClients();
+pub fn deinit(self: *Self) void {
+    self.wl_server.destroyClients();
 
-    server.new_input.link.remove();
-    server.new_output.link.remove();
+    self.new_input.link.remove();
+    self.new_output.link.remove();
 
-    server.new_xdg_toplevel.link.remove();
-    server.new_xdg_popup.link.remove();
-    server.request_set_cursor.link.remove();
-    server.request_set_selection.link.remove();
-    server.cursor_motion.link.remove();
-    server.cursor_motion_absolute.link.remove();
-    server.cursor_button.link.remove();
-    server.cursor_axis.link.remove();
-    server.cursor_frame.link.remove();
+    self.new_xdg_toplevel.link.remove();
+    self.new_xdg_popup.link.remove();
+    self.request_set_cursor.link.remove();
+    self.request_set_selection.link.remove();
+    self.cursor_motion.link.remove();
+    self.cursor_motion_absolute.link.remove();
+    self.cursor_button.link.remove();
+    self.cursor_axis.link.remove();
+    self.cursor_frame.link.remove();
 
-    server.backend.destroy();
-    server.wl_server.destroy();
+    self.backend.destroy();
+    self.wl_server.destroy();
 }
 
 fn newOutput(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
-    const server: *Self = @fieldParentPtr("new_output", listener);
+    const self: *Self = @fieldParentPtr("new_output", listener);
 
-    if (!wlr_output.initRender(server.allocator, server.renderer)) return;
-
-    var state = wlr.Output.State.init();
-    defer state.finish();
-
-    state.setEnabled(true);
-    if (wlr_output.preferredMode()) |mode| {
-        state.setMode(mode);
-    }
-    if (!wlr_output.commitState(&state)) return;
-
-    Output.create(server, wlr_output) catch {
+    Output.create(self, wlr_output) catch {
         std.log.err("failed to allocate new output", .{});
         wlr_output.destroy();
         return;
@@ -146,23 +136,24 @@ fn newOutput(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void 
 }
 
 fn newXdgToplevel(listener: *wl.Listener(*wlr.XdgToplevel), xdg_toplevel: *wlr.XdgToplevel) void {
-    const server: *Self = @fieldParentPtr("new_xdg_toplevel", listener);
+    const self: *Self = @fieldParentPtr("new_xdg_toplevel", listener);
     const xdg_surface = xdg_toplevel.base;
 
-    // Don't add the toplevel to server.toplevels until it is mapped
+    // Don't add the toplevel to self.toplevels until it is mapped
     const toplevel = gpa.create(Toplevel) catch {
         std.log.err("failed to allocate new toplevel", .{});
         return;
     };
 
     toplevel.* = .{
-        .server = server,
+        .server = self,
         .xdg_toplevel = xdg_toplevel,
-        .scene_tree = server.scene.tree.createSceneXdgSurface(xdg_surface) catch {
+        .scene_tree = self.scene.tree.createSceneXdgSurface(xdg_surface) catch {
             gpa.destroy(toplevel);
             std.log.err("failed to allocate new toplevel", .{});
             return;
         },
+        .workspace_id = self.active_workspace,
     };
     toplevel.scene_tree.node.data = toplevel;
     xdg_surface.data = toplevel.scene_tree;
@@ -210,10 +201,10 @@ const ViewAtResult = struct {
     sy: f64,
 };
 
-fn viewAt(server: *Self, lx: f64, ly: f64) ?ViewAtResult {
+fn viewAt(self: *Self, lx: f64, ly: f64) ?ViewAtResult {
     var sx: f64 = undefined;
     var sy: f64 = undefined;
-    if (server.scene.tree.node.at(lx, ly, &sx, &sy)) |node| {
+    if (self.scene.tree.node.at(lx, ly, &sx, &sy)) |node| {
         if (node.type != .buffer) return null;
         const scene_buffer = wlr.SceneBuffer.fromNode(node);
         const scene_surface = wlr.SceneSurface.tryFromBuffer(scene_buffer) orelse return null;
@@ -233,25 +224,25 @@ fn viewAt(server: *Self, lx: f64, ly: f64) ?ViewAtResult {
     return null;
 }
 
-pub fn focusView(server: *Self, toplevel: *Toplevel) void {
+pub fn focusView(self: *Self, toplevel: *Toplevel) void {
     const surface = toplevel.xdg_toplevel.base.surface;
 
-    if (server.seat.keyboard_state.focused_surface) |previous_surface| {
+    if (self.seat.keyboard_state.focused_surface) |previous_surface| {
         if (previous_surface == surface) return;
         if (wlr.XdgSurface.tryFromWlrSurface(previous_surface)) |xdg_surface| {
             _ = xdg_surface.role_data.toplevel.?.setActivated(false);
         }
     }
 
-    if (server.focused_toplevel) |focused_toplevel| {
+    if (self.focused_toplevel) |focused_toplevel| {
         _ = focused_toplevel.xdg_toplevel.setActivated(false);
     }
 
     _ = toplevel.xdg_toplevel.setActivated(true);
-    server.focused_toplevel = toplevel;
+    self.focused_toplevel = toplevel;
 
-    const wlr_keyboard = server.seat.getKeyboard() orelse return;
-    server.seat.keyboardNotifyEnter(
+    const wlr_keyboard = self.seat.getKeyboard() orelse return;
+    self.seat.keyboardNotifyEnter(
         surface,
         wlr_keyboard.keycodes[0..wlr_keyboard.num_keycodes],
         &wlr_keyboard.modifiers,
@@ -259,19 +250,19 @@ pub fn focusView(server: *Self, toplevel: *Toplevel) void {
 }
 
 fn newInput(listener: *wl.Listener(*wlr.InputDevice), device: *wlr.InputDevice) void {
-    const server: *Self = @fieldParentPtr("new_input", listener);
+    const self: *Self = @fieldParentPtr("new_input", listener);
     switch (device.type) {
-        .keyboard => Keyboard.create(server, device) catch |err| {
+        .keyboard => Keyboard.create(self, device) catch |err| {
             std.log.err("failed to create keyboard: {}", .{err});
             return;
         },
-        .pointer => server.cursor.attachInputDevice(device),
+        .pointer => self.cursor.attachInputDevice(device),
         else => {},
     }
 
-    server.seat.setCapabilities(.{
+    self.seat.setCapabilities(.{
         .pointer = true,
-        .keyboard = server.keyboards.length() > 0,
+        .keyboard = self.keyboards.length() > 0,
     });
 }
 
@@ -279,82 +270,88 @@ fn requestSetCursor(
     listener: *wl.Listener(*wlr.Seat.event.RequestSetCursor),
     event: *wlr.Seat.event.RequestSetCursor,
 ) void {
-    const server: *Self = @fieldParentPtr("request_set_cursor", listener);
-    if (event.seat_client == server.seat.pointer_state.focused_client)
-        server.cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
+    const self: *Self = @fieldParentPtr("request_set_cursor", listener);
+    if (event.seat_client == self.seat.pointer_state.focused_client)
+        self.cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
 }
 
 fn requestSetSelection(
     listener: *wl.Listener(*wlr.Seat.event.RequestSetSelection),
     event: *wlr.Seat.event.RequestSetSelection,
 ) void {
-    const server: *Self = @fieldParentPtr("request_set_selection", listener);
-    server.seat.setSelection(event.source, event.serial);
+    const self: *Self = @fieldParentPtr("request_set_selection", listener);
+    self.seat.setSelection(event.source, event.serial);
 }
 
 fn cursorMotion(
     listener: *wl.Listener(*wlr.Pointer.event.Motion),
     event: *wlr.Pointer.event.Motion,
 ) void {
-    const server: *Self = @fieldParentPtr("cursor_motion", listener);
-    server.cursor.move(event.device, event.delta_x, event.delta_y);
-    server.processCursorMotion(event.time_msec);
+    const self: *Self = @fieldParentPtr("cursor_motion", listener);
+    self.cursor.move(event.device, event.delta_x, event.delta_y);
+    self.processCursorMotion(event.time_msec);
 }
 
 fn cursorMotionAbsolute(
     listener: *wl.Listener(*wlr.Pointer.event.MotionAbsolute),
     event: *wlr.Pointer.event.MotionAbsolute,
 ) void {
-    const server: *Self = @fieldParentPtr("cursor_motion_absolute", listener);
-    server.cursor.warpAbsolute(event.device, event.x, event.y);
-    server.processCursorMotion(event.time_msec);
+    const self: *Self = @fieldParentPtr("cursor_motion_absolute", listener);
+    self.cursor.warpAbsolute(event.device, event.x, event.y);
+    self.processCursorMotion(event.time_msec);
 }
 
-fn processCursorMotion(server: *Self, time_msec: u32) void {
-    switch (server.cursor_mode) {
-        .passthrough => server.processPassthrough(time_msec),
-        .resize => server.processResize(),
+fn processCursorMotion(self: *Self, time_msec: u32) void {
+    switch (self.cursor_mode) {
+        .passthrough => self.processPassthrough(time_msec),
+        .resize => self.processResize(),
+        .move => {},
     }
 }
 
-fn processPassthrough(server: *Self, time_msec: u32) void {
-    if (server.viewAt(server.cursor.x, server.cursor.y)) |res| {
-        server.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
-        server.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
+fn processPassthrough(self: *Self, time_msec: u32) void {
+    if (self.viewAt(self.cursor.x, self.cursor.y)) |res| {
+        self.seat.pointerNotifyEnter(res.surface, res.sx, res.sy);
+        self.seat.pointerNotifyMotion(time_msec, res.sx, res.sy);
     } else {
-        server.cursor.setXcursor(server.cursor_mgr, "default");
-        server.seat.pointerClearFocus();
+        self.cursor.setXcursor(self.cursor_mgr, "default");
+        self.seat.pointerClearFocus();
     }
 }
 
-fn processResize(server: *Self) void {
-    const toplevel = server.focused_toplevel orelse {
+fn processResize(self: *Self) void {
+    const toplevel = self.focused_toplevel orelse {
         std.log.warn("cursor mode set to resize, but no toplevel is focused!", .{});
-        server.cursor_mode = .passthrough;
+        self.cursor_mode = .passthrough;
         return;
     };
 
-    const output = server.output_layout.outputAt(server.cursor.x, server.cursor.y) orelse return;
+    const output = self.output_layout.outputAt(self.cursor.x, self.cursor.y) orelse return;
     var layout_dirty = false;
 
-    if ((toplevel.index != 0 and server.resize_edges.left) or
-        (toplevel.index == 0 and server.resize_edges.right))
+    if ((toplevel.index != 0 and self.resize_edges.left) or
+        (toplevel.index == 0 and self.resize_edges.right))
     {
-        server.workspace.horizontal_ratio = server.cursor.x / @as(f64, @floatFromInt(output.width));
+        toplevel.getWorkspace().horizontal_ratio = self.cursor.x / @as(f64, @floatFromInt(output.width));
+        layout_dirty = true;
+    }
+
+    if (toplevel.index > 1 and self.resize_edges.top) {
+        const prev = toplevel.getWorkspace().toplevels.items[toplevel.index - 1];
+        prev.getWorkspace().resizeTile(prev, self.cursor.y);
         layout_dirty = true;
     }
 
     if (toplevel.index != 0 and
-        toplevel.index != server.toplevels.items.len - 1 and
-        server.resize_edges.bottom)
+        toplevel.index != self.toplevels.items.len - 1 and
+        self.resize_edges.bottom)
     {
-        server.workspace.resizeTile(toplevel, server.cursor.y);
-
+        toplevel.getWorkspace().resizeTile(toplevel, self.cursor.y);
         layout_dirty = true;
     }
 
-    if (layout_dirty) {
-        server.workspace.applyLayout();
+    if (layout_dirty == true) {
+        self.applyWorkspaceLayout(toplevel.workspace_id);
     }
 }
 
@@ -362,28 +359,40 @@ fn cursorButton(
     listener: *wl.Listener(*wlr.Pointer.event.Button),
     event: *wlr.Pointer.event.Button,
 ) void {
-    const server: *Self = @fieldParentPtr("cursor_button", listener);
-    const serial = server.seat.pointerNotifyButton(event.time_msec, event.button, event.state);
+    const self: *Self = @fieldParentPtr("cursor_button", listener);
+    const serial = self.seat.pointerNotifyButton(event.time_msec, event.button, event.state);
     switch (event.state) {
         .pressed => {
-            server.click_serial = serial;
-            if (server.viewAt(server.cursor.x, server.cursor.y)) |res| {
-                server.focusView(res.toplevel);
+            self.click_serial = serial;
+            if (self.viewAt(self.cursor.x, self.cursor.y)) |res| {
+                self.focusView(res.toplevel);
             }
         },
         .released => {
-            server.cursor_mode = .passthrough;
+            switch (self.cursor_mode) {
+                .passthrough => {},
+                .move => self.processMove(),
+                .resize => self.cursor_mode = .passthrough,
+            }
+            self.cursor_mode = .passthrough;
         },
         _ => {},
     }
+}
+
+fn processMove(self: *Self) void {
+    const focused = self.focused_toplevel orelse return;
+    const view_at = self.viewAt(self.cursor.x, self.cursor.y) orelse return;
+
+    focused.getWorkspace().swapTiles(focused, view_at.toplevel);
 }
 
 fn cursorAxis(
     listener: *wl.Listener(*wlr.Pointer.event.Axis),
     event: *wlr.Pointer.event.Axis,
 ) void {
-    const server: *Self = @fieldParentPtr("cursor_axis", listener);
-    server.seat.pointerNotifyAxis(
+    const self: *Self = @fieldParentPtr("cursor_axis", listener);
+    self.seat.pointerNotifyAxis(
         event.time_msec,
         event.orientation,
         event.delta,
@@ -394,15 +403,37 @@ fn cursorAxis(
 }
 
 fn cursorFrame(listener: *wl.Listener(*wlr.Cursor), _: *wlr.Cursor) void {
-    const server: *Self = @fieldParentPtr("cursor_frame", listener);
-    server.seat.pointerNotifyFrame();
+    const self: *Self = @fieldParentPtr("cursor_frame", listener);
+    self.seat.pointerNotifyFrame();
+}
+
+pub fn getWorkspace(self: *Self, id: u8) *Workspace {
+    return &self.workspaces[id];
+}
+
+pub fn getActiveWorkspace(self: *Self) *Workspace {
+    return self.getWorkspace(self.active_workspace);
+}
+
+pub fn setWorkspace(self: *Self, id: u8) void {
+    std.debug.assert(id < 10);
+
+    self.getActiveWorkspace().hide();
+    self.active_workspace = id;
+    self.getActiveWorkspace().applyLayout();
+}
+
+pub fn applyWorkspaceLayout(self: *Self, id: u8) void {
+    if (self.active_workspace == id) {
+        self.getWorkspace(id).applyLayout();
+    }
 }
 
 /// Assumes the modifier used for compositor keybinds is pressed
 /// Returns true if the key was handled
-pub fn handleKeybind(server: *Self, key: xkb.Keysym) bool {
+pub fn handleKeybind(self: *Self, key: xkb.Keysym) bool {
     switch (@intFromEnum(key)) {
-        xkb.Keysym.Escape => server.wl_server.terminate(),
+        xkb.Keysym.Escape => self.wl_server.terminate(),
         xkb.Keysym.Return => {
             var child = std.process.Child.init(&.{"alacritty"}, gpa);
 
@@ -412,7 +443,7 @@ pub fn handleKeybind(server: *Self, key: xkb.Keysym) bool {
             };
             defer env_map.deinit();
 
-            env_map.put("WAYLAND_DISPLAY", server.socket_name) catch {
+            env_map.put("WAYLAND_DISPLAY", self.socket_name) catch {
                 std.log.err("failed to add WAYLAND_DISPLAY to environment map!", .{});
                 return false;
             };
@@ -423,6 +454,16 @@ pub fn handleKeybind(server: *Self, key: xkb.Keysym) bool {
                 return false;
             };
         },
+        xkb.Keysym.@"1" => self.setWorkspace(0),
+        xkb.Keysym.@"2" => self.setWorkspace(1),
+        xkb.Keysym.@"3" => self.setWorkspace(2),
+        xkb.Keysym.@"4" => self.setWorkspace(3),
+        xkb.Keysym.@"5" => self.setWorkspace(4),
+        xkb.Keysym.@"6" => self.setWorkspace(5),
+        xkb.Keysym.@"7" => self.setWorkspace(6),
+        xkb.Keysym.@"8" => self.setWorkspace(7),
+        xkb.Keysym.@"9" => self.setWorkspace(8),
+        xkb.Keysym.@"0" => self.setWorkspace(9),
         else => return false,
     }
     return true;

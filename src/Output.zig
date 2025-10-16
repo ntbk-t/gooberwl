@@ -17,22 +17,33 @@ destroy: wl.Listener(*wlr.Output) = .init(handleDestroy),
 
 // The wlr.Output should be destroyed by the caller on failure to trigger cleanup.
 pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
-    const output = try gpa.create(Output);
+    if (!wlr_output.initRender(server.allocator, server.renderer)) return;
 
+    var state = wlr.Output.State.init();
+    defer state.finish();
+
+    state.setEnabled(true);
+    if (wlr_output.preferredMode()) |mode| {
+        state.setMode(mode);
+    }
+    if (!wlr_output.commitState(&state)) return;
+
+    const output = try gpa.create(Output);
+    errdefer gpa.destroy(output);
     output.* = .{
         .server = server,
         .wlr_output = wlr_output,
     };
-    wlr_output.events.frame.add(&output.frame);
-    wlr_output.events.request_state.add(&output.request_state);
-    wlr_output.events.destroy.add(&output.destroy);
 
     const layout_output = try server.output_layout.addAuto(wlr_output);
 
     const scene_output = try server.scene.createSceneOutput(wlr_output);
     server.scene_output_layout.addOutput(layout_output, scene_output);
 
-    server.workspace.resize(output.wlr_output.width, output.wlr_output.height);
+    wlr_output.events.frame.add(&output.frame);
+    wlr_output.events.request_state.add(&output.request_state);
+    wlr_output.events.destroy.add(&output.destroy);
+    server.workspaces[server.active_workspace].resize(output.wlr_output.width, output.wlr_output.height);
 }
 
 fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
@@ -52,8 +63,7 @@ fn handleRequestState(
     const output: *Output = @fieldParentPtr("request_state", listener);
 
     _ = output.wlr_output.commitState(event.state);
-    output.server.workspace.resize(output.wlr_output.width, output.wlr_output.height);
-    output.server.workspace.applyLayout();
+    output.server.workspaces[output.server.active_workspace].resize(output.wlr_output.width, output.wlr_output.height);
 }
 
 fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
