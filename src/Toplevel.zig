@@ -19,7 +19,7 @@ request_move: wl.Listener(*wlr.XdgToplevel.event.Move) = .init(handleRequestMove
 request_resize: wl.Listener(*wlr.XdgToplevel.event.Resize) = .init(handleRequestResize),
 
 index: usize = 0,
-scale: f64 = 1.0,
+scale: f64 = 0.0,
 
 pub fn setScale(self: *Self, scale: f64) void {
     self.server.workspace.total_scale -= self.scale;

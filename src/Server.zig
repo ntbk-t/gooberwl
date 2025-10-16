@@ -44,7 +44,6 @@ cursor_axis: wl.Listener(*wlr.Pointer.event.Axis) = .init(cursorAxis),
 cursor_frame: wl.Listener(*wlr.Cursor) = .init(cursorFrame),
 
 focused_toplevel: ?*Toplevel = null,
-horizontal_ratio: f64 = 2.0 / 3.0,
 cursor_mode: enum { passthrough, resize } = .passthrough,
 resize_edges: wlr.Edges = .{},
 click_serial: u32 = 0,
@@ -341,7 +340,7 @@ fn processResize(server: *Self) void {
     if ((toplevel.index != 0 and server.resize_edges.left) or
         (toplevel.index == 0 and server.resize_edges.right))
     {
-        server.horizontal_ratio = server.cursor.x / @as(f64, @floatFromInt(output.width));
+        server.workspace.horizontal_ratio = server.cursor.x / @as(f64, @floatFromInt(output.width));
         layout_dirty = true;
     }
 
@@ -349,19 +348,7 @@ fn processResize(server: *Self) void {
         toplevel.index != server.toplevels.items.len - 1 and
         server.resize_edges.bottom)
     {
-        const current_height = @as(f64, @floatFromInt(output.height)) * toplevel.scale / server.workspace.total_scale;
-
-        const current_top = @as(f64, @floatFromInt(toplevel.scene_tree.node.y));
-        const current_bottom = current_top + current_height;
-        const ideal_bottom = server.cursor.y;
-
-        const resize_by = (ideal_bottom - current_bottom);
-
-        const new_height = current_height + resize_by;
-        if (new_height < 1) return;
-
-        const height_ratio = new_height / @as(f64, @floatFromInt(output.height));
-        toplevel.setScale(height_ratio / (1.0 - height_ratio));
+        server.workspace.resizeTile(toplevel, server.cursor.y);
 
         layout_dirty = true;
     }

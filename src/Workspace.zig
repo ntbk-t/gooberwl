@@ -25,6 +25,14 @@ pub fn resize(self: *Self, width: i32, height: i32) void {
 }
 
 pub fn appendTile(self: *Self, toplevel: *Toplevel) !void {
+    if (toplevel.scale == 0.0) {
+        if (self.toplevels.items.len > 1) {
+            toplevel.scale = self.toplevels.getLast().scale;
+        } else {
+            toplevel.scale = 1.0;
+        }
+    }
+
     toplevel.index = self.len();
     try self.toplevels.append(allocator, toplevel);
 
@@ -34,12 +42,6 @@ pub fn appendTile(self: *Self, toplevel: *Toplevel) !void {
 }
 
 pub fn removeTile(self: *Self, to_remove: *Toplevel) void {
-    for (to_remove.index..self.len() - 1) |i| {
-        self.toplevels.items[i] = self.toplevels.items[i + 1];
-        self.toplevels.items[i].index = i;
-    }
-    _ = self.toplevels.shrinkRetainingCapacity(self.len() - 1);
-
     if (to_remove.index == 0) {
         if (self.len() > 1) {
             self.total_scale -= self.toplevels.items[1].scale;
@@ -47,16 +49,31 @@ pub fn removeTile(self: *Self, to_remove: *Toplevel) void {
     } else {
         self.total_scale -= to_remove.scale;
     }
+
+    for (to_remove.index..self.len() - 1) |i| {
+        self.toplevels.items[i] = self.toplevels.items[i + 1];
+        self.toplevels.items[i].index = i;
+    }
+    _ = self.toplevels.shrinkRetainingCapacity(self.len() - 1);
 }
 
-pub fn resizeTile(self: Self, toplevel: *Toplevel, height: f64) void {
-    debug.assert(toplevel != self.toplevels.getLast());
+pub fn resizeTile(self: Self, toplevel: *Toplevel, to_y: f64) void {
+    const top: f64 = @floatFromInt(toplevel.scene_tree.node.y);
+    const bottom = top + @as(
+        f64,
+        @floatFromInt(self.height),
+    ) * toplevel.scale / self.total_scale;
 
-    const old_height = toplevel.height;
-    toplevel.height = height;
+    const resize_by = (to_y - bottom) * self.total_scale / @as(f64, @floatFromInt(self.height));
 
-    const next = self.toplevels[toplevel.index + 1];
-    next.height -= height - old_height;
+    toplevel.scale += resize_by;
+
+    const remaining_toplevels = self.toplevels.items[toplevel.index + 1 ..];
+    const resize_part = resize_by / @as(f64, @floatFromInt(remaining_toplevels.len));
+
+    for (remaining_toplevels) |tl| {
+        tl.scale -= resize_part;
+    }
 }
 
 pub fn applyLayout(self: Self) void {
@@ -96,17 +113,15 @@ pub fn applyLayout(self: Self) void {
     const secondary_x = primary_x + primary_width + 1;
     const secondary_width = self.width - secondary_x;
 
-    std.log.debug("{}", .{self.total_scale});
-
     var secondary_y: i32 = 0;
     for (secondary_toplevels, 0..) |toplevel, i| {
         std.debug.assert(toplevel.index == i + 1);
 
         const scale = toplevel.scale / self.total_scale;
 
-        const secondary_height: i32 = if (i == self.len() - 2)
-            primary_height - secondary_y
-        else
+        const secondary_height: i32 = //if (i == self.len() - 2)
+            // primary_height - secondary_y
+            // else
             @intFromFloat(@as(
                 f64,
                 @floatFromInt(self.height),
