@@ -8,10 +8,24 @@ const wlr = @import("wlroots");
 
 const Seat = @import("Seat.zig");
 const Server = @import("../Server.zig");
+const Toplevel = @import("../xdg_shell/Toplevel.zig");
+
+const State = union(enum) {
+    passthrough: void,
+    move: struct {
+        toplevel: *Toplevel,
+        x_offset: f64,
+        y_offset: f64,
+    },
+    resize: struct {
+        toplevel: *Toplevel,
+        edges: wlr.Edges,
+    },
+};
 
 wlr_cursor: *wlr.Cursor,
 attached_devices: usize = 0,
-mode: enum { passthrough, move, resize } = .passthrough,
+state: State = .{ .passthrough = {} },
 resize_edges: wlr.Edges = .{},
 click_serial: u32 = 0,
 
@@ -84,12 +98,11 @@ fn onButton(
             }
         },
         .released => {
-            switch (self.mode) {
-                .passthrough => {},
+            switch (self.state) {
+                .passthrough, .resize => {},
                 .move => self.processMove(),
-                .resize => self.mode = .passthrough,
             }
-            self.mode = .passthrough;
+            self.state = .{ .passthrough = {} };
         },
         _ => {},
     }
@@ -109,10 +122,10 @@ fn onFrame(listener: *wl.Listener(*wlr.Cursor), _: *wlr.Cursor) void {
 }
 
 fn processMotion(self: *Self, time_msec: u32) void {
-    switch (self.mode) {
+    switch (self.state) {
         .passthrough => self.processPassthrough(time_msec),
-        .resize => self.processResize(),
         .move => {},
+        .resize => |resize| self.processResize(resize.toplevel, resize.edges),
     }
 }
 
@@ -139,28 +152,23 @@ fn processPassthrough(self: *Self, time_msec: u32) void {
     }
 }
 
-fn processResize(self: *Self) void {
+fn processResize(self: *Self, toplevel: *Toplevel, edges: wlr.Edges) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    const toplevel = seat.focused_toplevel orelse {
-        std.log.warn("cursor mode set to resize, but no toplevel is focused!", .{});
-        self.mode = .passthrough;
-        return;
-    };
     const workspace = toplevel.getWorkspace();
 
     const output = server.output_layout.outputAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
     var layout_dirty = false;
 
-    if ((toplevel.index != 0 and self.resize_edges.left) or
-        (toplevel.index == 0 and self.resize_edges.right))
+    if ((toplevel.index != 0 and edges.left) or
+        (toplevel.index == 0 and edges.right))
     {
         workspace.horizontal_ratio = self.wlr_cursor.x / @as(f64, @floatFromInt(output.width));
         layout_dirty = true;
     }
 
-    if (toplevel.index > 1 and self.resize_edges.top) {
+    if (toplevel.index > 1 and edges.top) {
         const prev = workspace.toplevels.items[toplevel.index - 1];
         prev.getWorkspace().resizeTile(prev, self.wlr_cursor.y);
         layout_dirty = true;
@@ -168,7 +176,7 @@ fn processResize(self: *Self) void {
 
     if (toplevel.index != 0 and
         toplevel.index != workspace.len() - 1 and
-        self.resize_edges.bottom)
+        edges.bottom)
     {
         workspace.resizeTile(toplevel, self.wlr_cursor.y);
         layout_dirty = true;

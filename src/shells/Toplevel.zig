@@ -84,7 +84,9 @@ fn onMap(listener: *wl.Listener(void)) void {
     const self: *Self = @fieldParentPtr("on_map", listener);
     const server = self.server;
 
-    _ = self.xdg_toplevel.setTiled(.{ .top = true, .bottom = true, .left = true, .right = true });
+    _ = self.xdg_toplevel.setTiled(
+        .{ .top = true, .bottom = true, .left = true, .right = true },
+    );
 
     self.server.focusView(self);
     self.scene_tree.node.lowerToBottom();
@@ -129,7 +131,9 @@ fn onRequestMove(
     const self: *Self = @fieldParentPtr("on_request_move", listener);
 
     if (event.serial == self.server.seat.cursor.click_serial) {
-        self.server.seat.cursor.mode = .move;
+        self.server.seat.cursor.state = .{
+            .move = .{ .toplevel = self, .x_offset = 0, .y_offset = 0 },
+        };
     }
 }
 
@@ -140,8 +144,11 @@ fn onRequestResize(
     const self: *Self = @fieldParentPtr("on_request_resize", listener);
 
     if (event.serial == self.server.seat.cursor.click_serial) {
-        self.server.focusView(self);
-        self.server.seat.cursor.mode = .resize;
-        self.server.seat.cursor.resize_edges = event.edges;
+        self.server.seat.cursor.state = .{
+            .resize = .{
+                .toplevel = self,
+                .edges = event.edges,
+            },
+        };
     }
 }

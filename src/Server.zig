@@ -17,9 +17,9 @@ const Workspace = @import("Workspace.zig");
 const Seat = @import("seat/Seat.zig");
 const Keyboard = @import("seat/Keyboard.zig");
 
-const XdgShell = @import("xdg_shell/XdgShell.zig");
-const Popup = @import("xdg_shell/Popup.zig");
-const Toplevel = @import("xdg_shell/Toplevel.zig");
+const XdgShell = @import("shells/XdgShell.zig");
+const Popup = @import("shells/Popup.zig");
+const Toplevel = @import("shells/Toplevel.zig");
 
 wl_server: *wl.Server,
 backend: *wlr.Backend,
@@ -198,7 +198,7 @@ pub fn handleKeybind(self: *Self, key: xkb.Keysym) bool {
     switch (@intFromEnum(key)) {
         xkb.Keysym.Escape => self.wl_server.terminate(),
         xkb.Keysym.Return => {
-            var child = process.Child.init(&.{"alacritty"}, gpa);
+            var child = process.Child.init(&.{ "wofi", "--show", "drun" }, gpa);
 
             var env_map = process.getEnvMap(gpa) catch {
                 log.err("failed to get environment map!", .{});
