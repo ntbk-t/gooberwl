@@ -176,7 +176,7 @@ pub fn startResize(self: *Self, toplevel: *Toplevel, edges: wlr.Edges) void {
             self.wlr_cursor.setXcursor(server.cursor_mgr, "col-resize");
         }
     } else if (edges.top or edges.bottom) {
-        self.wlr_cursor.setXcursor(server.cursor_mgr, "hand1");
+        self.wlr_cursor.setXcursor(server.cursor_mgr, "row-resize");
     } else {
         return;
     }
