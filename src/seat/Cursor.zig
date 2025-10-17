@@ -8,7 +8,7 @@ const wlr = @import("wlroots");
 
 const Seat = @import("Seat.zig");
 const Server = @import("../Server.zig");
-const Toplevel = @import("../xdg_shell/Toplevel.zig");
+const Toplevel = @import("../shells/Toplevel.zig");
 
 const State = union(enum) {
     passthrough: void,

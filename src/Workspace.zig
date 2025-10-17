@@ -7,7 +7,7 @@ const allocator = std.heap.c_allocator;
 const wlr = @import("wlroots");
 
 const Output = @import("Output.zig");
-const Toplevel = @import("xdg_shell/Toplevel.zig");
+const Toplevel = @import("shells/Toplevel.zig");
 
 width: i32 = 0,
 height: i32 = 0,

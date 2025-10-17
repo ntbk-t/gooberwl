@@ -9,7 +9,7 @@ const wlr = @import("wlroots");
 const Cursor = @import("Cursor.zig");
 const Server = @import("../Server.zig");
 const Keyboard = @import("Keyboard.zig");
-const Toplevel = @import("../xdg_shell/Toplevel.zig");
+const Toplevel = @import("../shells/Toplevel.zig");
 
 wlr_seat: *wlr.Seat,
 on_request_set_cursor: wl.Listener(*wlr.Seat.event.RequestSetCursor) = .init(requestSetCursor),
