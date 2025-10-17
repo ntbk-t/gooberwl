@@ -142,13 +142,13 @@ pub fn applyLayout(self: Self) void {
 
         const scale = toplevel.scale / self.total_scale;
 
-        const secondary_height: i32 = //if (i == self.len() - 2)
-            // primary_height - secondary_y
-            // else
-            @intFromFloat(@as(
+        const secondary_height: i32 = @max(if (i == self.len() - 2)
+            primary_height - secondary_y
+        else
+            @as(i32, @intFromFloat(@as(
                 f64,
                 @floatFromInt(self.height),
-            ) * scale);
+            ) * scale)), toplevel.xdg_toplevel.current.min_height);
 
         toplevel.setRect(
             @intCast(secondary_x),

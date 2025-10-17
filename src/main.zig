@@ -11,7 +11,7 @@ const gpa = std.heap.c_allocator;
 const Server = @import("Server.zig");
 
 pub fn main() anyerror!void {
-    wlr.log.init(.debug, null);
+    wlr.log.init(.info, null);
 
     var server: Server = try .init();
     defer server.deinit();

@@ -101,8 +101,7 @@ fn requestSetCursor(
 ) void {
     const self: *Self = @fieldParentPtr("on_request_set_cursor", listener);
 
-    if (event.seat_client == self.wlr_seat.pointer_state.focused_client)
-        self.cursor.wlr_cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
+    self.cursor.setSurface(event.surface, event.hotspot_x, event.hotspot_y);
 }
 
 fn requestSetSelection(

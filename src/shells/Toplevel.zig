@@ -53,6 +53,22 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
     xdg_toplevel.events.request_resize.add(&toplevel.on_request_resize);
 }
 
+pub fn getRect(self: *Self) struct { x: f64, y: f64, width: f64, height: f64 } {
+    const workspace = self.getWorkspace();
+    return .{
+        .x = @floatFromInt(self.scene_tree.node.x),
+        .y = @floatFromInt(self.scene_tree.node.y),
+        .width = @as(f64, @floatFromInt(workspace.width)) * if (self.index == 0)
+            workspace.horizontal_ratio
+        else
+            (1 - workspace.horizontal_ratio),
+        .height = @as(
+            f64,
+            @floatFromInt(workspace.height),
+        ) * self.scale / workspace.total_scale,
+    };
+}
+
 pub fn getWorkspace(self: *Self) *Workspace {
     return self.server.getWorkspace(self.workspace_id);
 }
@@ -131,9 +147,7 @@ fn onRequestMove(
     const self: *Self = @fieldParentPtr("on_request_move", listener);
 
     if (event.serial == self.server.seat.cursor.click_serial) {
-        self.server.seat.cursor.state = .{
-            .move = .{ .toplevel = self, .x_offset = 0, .y_offset = 0 },
-        };
+        self.server.seat.cursor.startMove(self);
     }
 }
 
@@ -143,12 +157,5 @@ fn onRequestResize(
 ) void {
     const self: *Self = @fieldParentPtr("on_request_resize", listener);
 
-    if (event.serial == self.server.seat.cursor.click_serial) {
-        self.server.seat.cursor.state = .{
-            .resize = .{
-                .toplevel = self,
-                .edges = event.edges,
-            },
-        };
-    }
+    self.server.seat.cursor.startResize(self, event.edges);
 }

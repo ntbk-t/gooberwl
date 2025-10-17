@@ -192,13 +192,35 @@ pub fn applyWorkspaceLayout(self: *Self, id: u8) void {
     }
 }
 
+pub fn handleMousebind(self: *Self, button: u32, x: f64, y: f64) void {
+    const toplevel = if (self.viewAt(x, y)) |result| result.toplevel else return;
+
+    const rect = toplevel.getRect();
+    const center_x = rect.x + rect.width / 2;
+    const center_y = rect.y + rect.height / 2;
+
+    switch (button) {
+        // TODO: where the HELL are these defined
+        272 => self.seat.cursor.startMove(toplevel),
+        273 => {
+            self.seat.cursor.startResize(toplevel, .{
+                .top = center_y > y,
+                .bottom = center_y <= y,
+                .left = center_x > x,
+                .right = center_x <= x,
+            });
+        },
+        else => {},
+    }
+}
+
 /// Assumes the modifier used for compositor keybinds is pressed
 /// Returns true if the key was handled
 pub fn handleKeybind(self: *Self, key: xkb.Keysym) bool {
     switch (@intFromEnum(key)) {
         xkb.Keysym.Escape => self.wl_server.terminate(),
         xkb.Keysym.Return => {
-            var child = process.Child.init(&.{ "wofi", "--show", "drun" }, gpa);
+            var child = process.Child.init(&.{"alacritty"}, gpa);
 
             var env_map = process.getEnvMap(gpa) catch {
                 log.err("failed to get environment map!", .{});

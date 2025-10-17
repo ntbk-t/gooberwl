@@ -20,6 +20,8 @@ const State = union(enum) {
     resize: struct {
         toplevel: *Toplevel,
         edges: wlr.Edges,
+        x_offset: f64,
+        y_offset: f64,
     },
 };
 
@@ -89,22 +91,29 @@ fn onButton(
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    const serial = seat.pointerNotifyButton(event);
     switch (event.state) {
         .pressed => {
-            self.click_serial = serial;
+            if (seat.wlr_seat.getKeyboard()) |keyboard| {
+                if (keyboard.getModifiers().alt) {
+                    server.handleMousebind(event.button, self.wlr_cursor.x, self.wlr_cursor.y);
+                    return;
+                }
+            }
+            self.click_serial = seat.pointerNotifyButton(event);
             if (server.viewAt(self.wlr_cursor.x, self.wlr_cursor.y)) |res| {
                 server.focusView(res.toplevel);
             }
         },
         .released => {
             switch (self.state) {
-                .passthrough, .resize => {},
-                .move => self.processMove(),
+                .passthrough => {},
+                .move => self.endMove(event.time_msec),
+                .resize => seat.pointerNotifyExit(),
             }
             self.state = .{ .passthrough = {} };
+            _ = seat.pointerNotifyButton(event);
         },
-        _ => {},
+        _ => _ = seat.pointerNotifyButton(event),
     }
 }
 
@@ -123,13 +132,83 @@ fn onFrame(listener: *wl.Listener(*wlr.Cursor), _: *wlr.Cursor) void {
 
 fn processMotion(self: *Self, time_msec: u32) void {
     switch (self.state) {
-        .passthrough => self.processPassthrough(time_msec),
+        .passthrough => self.updatePassthrough(time_msec),
         .move => {},
-        .resize => |resize| self.processResize(resize.toplevel, resize.edges),
+        .resize => |resize| self.updateResize(resize.toplevel, resize.x_offset, resize.y_offset, resize.edges),
     }
 }
 
-fn processMove(self: *Self) void {
+pub fn startMove(self: *Self, toplevel: *Toplevel) void {
+    const seat = self.getSeat();
+    const server = seat.getServer();
+
+    seat.pointerNotifyExit();
+    self.wlr_cursor.setXcursor(server.cursor_mgr, "hand1");
+
+    self.state = .{
+        .move = .{
+            .toplevel = toplevel,
+            .x_offset = self.wlr_cursor.x - @as(f64, @floatFromInt(toplevel.scene_tree.node.x)),
+            .y_offset = self.wlr_cursor.y - @as(f64, @floatFromInt(toplevel.scene_tree.node.y)),
+        },
+    };
+}
+
+pub fn startResize(self: *Self, toplevel: *Toplevel, edges: wlr.Edges) void {
+    const seat = self.getSeat();
+    const server = seat.getServer();
+
+    if (edges.left or edges.right) {
+        if (edges.top or edges.bottom) {
+            self.wlr_cursor.setXcursor(server.cursor_mgr, "all-scroll");
+        } else {
+            self.wlr_cursor.setXcursor(server.cursor_mgr, "col-resize");
+        }
+    } else if (edges.top or edges.bottom) {
+        self.wlr_cursor.setXcursor(server.cursor_mgr, "hand1");
+    } else {
+        return;
+    }
+    seat.pointerNotifyExit();
+
+    const rect = toplevel.getRect();
+
+    // OH GOD D:
+    const edge_x =
+        if (edges.left)
+            rect.x
+        else if (edges.right)
+            rect.x + rect.width
+        else
+            self.wlr_cursor.x;
+
+    const edge_y =
+        if (edges.top)
+            rect.y
+        else if (edges.bottom)
+            rect.y + rect.height
+        else
+            self.wlr_cursor.y;
+
+    server.seat.cursor.state = .{
+        .resize = .{
+            .toplevel = toplevel,
+            .edges = edges,
+            // OH NO...
+            .x_offset = edge_x - self.wlr_cursor.x,
+            .y_offset = edge_y - self.wlr_cursor.y,
+        },
+    };
+}
+
+pub fn setSurface(self: *Self, surface: ?*wlr.Surface, hotspot_x: i32, hotspot_y: i32) void {
+    switch (self.state) {
+        .passthrough => self.wlr_cursor.setSurface(surface, hotspot_x, hotspot_y),
+        .move, .resize => {},
+    }
+}
+
+fn endMove(self: *Self, time_msec: u32) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
@@ -138,9 +217,11 @@ fn processMove(self: *Self) void {
 
     focused.getWorkspace().swapTiles(focused, view_at.toplevel);
     server.applyWorkspaceLayout(focused.workspace_id);
+
+    self.updatePassthrough(time_msec);
 }
 
-fn processPassthrough(self: *Self, time_msec: u32) void {
+fn updatePassthrough(self: *Self, time_msec: u32) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
@@ -152,7 +233,7 @@ fn processPassthrough(self: *Self, time_msec: u32) void {
     }
 }
 
-fn processResize(self: *Self, toplevel: *Toplevel, edges: wlr.Edges) void {
+fn updateResize(self: *Self, toplevel: *Toplevel, x_offset: f64, y_offset: f64, edges: wlr.Edges) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
@@ -161,16 +242,18 @@ fn processResize(self: *Self, toplevel: *Toplevel, edges: wlr.Edges) void {
     const output = server.output_layout.outputAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
     var layout_dirty = false;
 
+    const x = self.wlr_cursor.x + x_offset;
+    const y = self.wlr_cursor.y + y_offset;
     if ((toplevel.index != 0 and edges.left) or
         (toplevel.index == 0 and edges.right))
     {
-        workspace.horizontal_ratio = self.wlr_cursor.x / @as(f64, @floatFromInt(output.width));
+        workspace.horizontal_ratio = x / @as(f64, @floatFromInt(output.width));
         layout_dirty = true;
     }
 
     if (toplevel.index > 1 and edges.top) {
         const prev = workspace.toplevels.items[toplevel.index - 1];
-        prev.getWorkspace().resizeTile(prev, self.wlr_cursor.y);
+        prev.getWorkspace().resizeTile(prev, y);
         layout_dirty = true;
     }
 
@@ -178,7 +261,7 @@ fn processResize(self: *Self, toplevel: *Toplevel, edges: wlr.Edges) void {
         toplevel.index != workspace.len() - 1 and
         edges.bottom)
     {
-        workspace.resizeTile(toplevel, self.wlr_cursor.y);
+        workspace.resizeTile(toplevel, y);
         layout_dirty = true;
     }
 
