@@ -210,6 +210,7 @@ pub fn handleMousebind(self: *Self, button: u32, x: f64, y: f64) void {
                 .right = center_x <= x,
             });
         },
+        274 => toplevel.xdg_toplevel.sendClose(),
         else => {},
     }
 }
