@@ -180,6 +180,9 @@ pub fn setWorkspace(self: *Self, id: u8) void {
 
     self.getActiveWorkspace().hide();
     self.active_workspace = id;
+
+    const output = self.output_layout.outputAt(0, 0) orelse unreachable;
+    self.getActiveWorkspace().resize(output.width, output.height);
     self.getActiveWorkspace().applyLayout();
 }
 
