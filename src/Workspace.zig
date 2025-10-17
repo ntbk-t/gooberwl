@@ -13,6 +13,7 @@ width: i32 = 0,
 height: i32 = 0,
 horizontal_ratio: f64 = 2.0 / 3.0,
 toplevels: std.ArrayList(*Toplevel) = .empty,
+scroll: f64 = 0.0,
 total_scale: f64 = 0.0,
 
 pub fn len(self: Self) usize {
@@ -134,7 +135,7 @@ pub fn applyLayout(self: Self) void {
     const secondary_x = primary_x + primary_width + 1;
     const secondary_width = self.width - secondary_x;
 
-    var secondary_y: i32 = 0;
+    var secondary_y: i32 = @intFromFloat(-self.scroll);
     for (secondary_toplevels, 0..) |toplevel, i| {
         toplevel.scene_tree.node.setEnabled(true);
 

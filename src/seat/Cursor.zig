@@ -122,6 +122,17 @@ fn onAxis(
     event: *wlr.Pointer.event.Axis,
 ) void {
     const self: *Self = @fieldParentPtr("on_axis", listener);
+    const seat = self.getSeat();
+    const server = seat.getServer();
+
+    if (seat.wlr_seat.getKeyboard()) |keyboard| {
+        if (keyboard.getModifiers().alt) {
+            server.getActiveWorkspace().scroll += event.delta;
+            server.getActiveWorkspace().applyLayout();
+            return;
+        }
+    }
+
     self.getSeat().pointerNotifyAxis(event);
 }
 
