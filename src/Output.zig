@@ -43,7 +43,9 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     wlr_output.events.frame.add(&output.frame);
     wlr_output.events.request_state.add(&output.request_state);
     wlr_output.events.destroy.add(&output.destroy);
-    server.workspaces[server.active_workspace].resize(output.wlr_output.width, output.wlr_output.height);
+
+    server.getActiveWorkspace().resize(output.wlr_output.width, output.wlr_output.height);
+    server.getActiveWorkspace().applyLayout();
 }
 
 fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
@@ -63,7 +65,9 @@ fn handleRequestState(
     const output: *Output = @fieldParentPtr("request_state", listener);
 
     _ = output.wlr_output.commitState(event.state);
-    output.server.workspaces[output.server.active_workspace].resize(output.wlr_output.width, output.wlr_output.height);
+
+    output.server.getActiveWorkspace().resize(output.wlr_output.width, output.wlr_output.height);
+    output.server.getActiveWorkspace().applyLayout();
 }
 
 fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {

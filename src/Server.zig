@@ -1,19 +1,25 @@
 const Self = @This();
 
 const std = @import("std");
+const debug = std.debug;
+const log = std.log;
 const posix = std.posix;
+const process = std.process;
 const gpa = std.heap.c_allocator;
 
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 const xkb = @import("xkbcommon");
 
-const Keyboard = @import("seat/Keyboard.zig");
 const Output = @import("Output.zig");
-const Popup = @import("Popup.zig");
-const Toplevel = @import("Toplevel.zig");
 const Workspace = @import("Workspace.zig");
+
 const Seat = @import("seat/Seat.zig");
+const Keyboard = @import("seat/Keyboard.zig");
+
+const XdgShell = @import("xdg_shell/XdgShell.zig");
+const Popup = @import("xdg_shell/Popup.zig");
+const Toplevel = @import("xdg_shell/Toplevel.zig");
 
 wl_server: *wl.Server,
 backend: *wlr.Backend,
@@ -22,22 +28,19 @@ allocator: *wlr.Allocator,
 scene: *wlr.Scene,
 output_layout: *wlr.OutputLayout,
 scene_output_layout: *wlr.SceneOutputLayout,
-xdg_shell: *wlr.XdgShell,
-
-toplevels: std.ArrayList(*Toplevel) = .empty,
-seat: Seat,
 cursor_mgr: *wlr.XcursorManager,
+
+seat: Seat,
+xdg_shell: XdgShell,
 
 on_new_input: wl.Listener(*wlr.InputDevice) = .init(newInput),
 on_new_output: wl.Listener(*wlr.Output) = .init(newOutput),
-on_new_xdg_toplevel: wl.Listener(*wlr.XdgToplevel) = .init(newXdgToplevel),
-on_new_xdg_popup: wl.Listener(*wlr.XdgPopup) = .init(newXdgPopup),
 
 workspaces: [10]Workspace = @splat(.{}),
-active_workspace: u8,
+active_workspace: u8 = 0,
 
-socket_buf: [11]u8,
-socket_name: [:0]const u8,
+socket_buf: [11]u8 = undefined,
+socket_name: [:0]const u8 = undefined,
 
 pub fn init() !Self {
     const wl_server = try wl.Server.create();
@@ -53,12 +56,9 @@ pub fn init() !Self {
         .scene = scene,
         .output_layout = output_layout,
         .scene_output_layout = try scene.attachOutputLayout(output_layout),
-        .xdg_shell = try .create(wl_server, 2),
+        .xdg_shell = try .init(wl_server),
         .seat = try .init(wl_server, "default"),
         .cursor_mgr = try .create(null, 24),
-        .socket_buf = undefined,
-        .socket_name = undefined,
-        .active_workspace = 0,
     };
 }
 
@@ -72,10 +72,8 @@ pub fn start(self: *Self) !void {
     self.backend.events.new_input.add(&self.on_new_input);
     self.backend.events.new_output.add(&self.on_new_output);
 
-    self.xdg_shell.events.new_toplevel.add(&self.on_new_xdg_toplevel);
-    self.xdg_shell.events.new_popup.add(&self.on_new_xdg_popup);
-
     self.seat.start();
+    self.xdg_shell.start();
 
     self.seat.cursor.wlr_cursor.attachOutputLayout(self.output_layout);
     try self.cursor_mgr.load(1);
@@ -92,10 +90,8 @@ pub fn deinit(self: *Self) void {
     self.on_new_input.link.remove();
     self.on_new_output.link.remove();
 
-    self.on_new_xdg_toplevel.link.remove();
-    self.on_new_xdg_popup.link.remove();
-
     self.seat.deinit();
+    self.xdg_shell.deinit();
 
     self.backend.destroy();
     self.wl_server.destroy();
@@ -105,23 +101,9 @@ fn newOutput(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void 
     const self: *Self = @fieldParentPtr("on_new_output", listener);
 
     Output.create(self, wlr_output) catch {
-        std.log.err("failed to allocate new output", .{});
+        log.err("failed to allocate new output", .{});
         wlr_output.destroy();
         return;
-    };
-}
-
-fn newXdgToplevel(listener: *wl.Listener(*wlr.XdgToplevel), xdg_toplevel: *wlr.XdgToplevel) void {
-    const self: *Self = @fieldParentPtr("on_new_xdg_toplevel", listener);
-
-    Toplevel.create(self, xdg_toplevel) catch {
-        xdg_toplevel.sendClose();
-    };
-}
-
-fn newXdgPopup(_: *wl.Listener(*wlr.XdgPopup), xdg_popup: *wlr.XdgPopup) void {
-    Popup.create(xdg_popup) catch {
-        xdg_popup.destroy();
     };
 }
 
@@ -194,7 +176,7 @@ pub fn getActiveWorkspace(self: *Self) *Workspace {
 }
 
 pub fn setWorkspace(self: *Self, id: u8) void {
-    std.debug.assert(id < 10);
+    debug.assert(id < 10);
 
     self.getActiveWorkspace().hide();
     self.active_workspace = id;
@@ -213,22 +195,22 @@ pub fn handleKeybind(self: *Self, key: xkb.Keysym) bool {
     switch (@intFromEnum(key)) {
         xkb.Keysym.Escape => self.wl_server.terminate(),
         xkb.Keysym.Return => {
-            var child = std.process.Child.init(&.{"alacritty"}, gpa);
+            var child = process.Child.init(&.{"alacritty"}, gpa);
 
-            var env_map = std.process.getEnvMap(gpa) catch {
-                std.log.err("failed to get environment map!", .{});
+            var env_map = process.getEnvMap(gpa) catch {
+                log.err("failed to get environment map!", .{});
                 return false;
             };
             defer env_map.deinit();
 
             env_map.put("WAYLAND_DISPLAY", self.socket_name) catch {
-                std.log.err("failed to add WAYLAND_DISPLAY to environment map!", .{});
+                log.err("failed to add WAYLAND_DISPLAY to environment map!", .{});
                 return false;
             };
             child.env_map = &env_map;
 
             child.spawn() catch {
-                std.log.err("failed to spawn terminal window!", .{});
+                log.err("failed to spawn terminal window!", .{});
                 return false;
             };
         },

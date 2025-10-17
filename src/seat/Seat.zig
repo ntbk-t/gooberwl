@@ -9,7 +9,7 @@ const wlr = @import("wlroots");
 const Cursor = @import("Cursor.zig");
 const Server = @import("../Server.zig");
 const Keyboard = @import("Keyboard.zig");
-const Toplevel = @import("../Toplevel.zig");
+const Toplevel = @import("../xdg_shell/Toplevel.zig");
 
 wlr_seat: *wlr.Seat,
 on_request_set_cursor: wl.Listener(*wlr.Seat.event.RequestSetCursor) = .init(requestSetCursor),
@@ -27,16 +27,16 @@ pub fn init(server: *wl.Server, name: [*:0]const u8) !Self {
     };
 }
 
-pub fn start(self: *Self) void {
-    self.wlr_seat.events.request_set_cursor.add(&self.on_request_set_cursor);
-    self.wlr_seat.events.request_set_selection.add(&self.on_request_set_selection);
-    self.cursor.start();
-}
-
 pub fn deinit(self: *Self) void {
     self.on_request_set_cursor.link.remove();
     self.on_request_set_selection.link.remove();
     self.cursor.deinit();
+}
+
+pub fn start(self: *Self) void {
+    self.wlr_seat.events.request_set_cursor.add(&self.on_request_set_cursor);
+    self.wlr_seat.events.request_set_selection.add(&self.on_request_set_selection);
+    self.cursor.start();
 }
 
 pub fn getServer(self: *Self) *Server {

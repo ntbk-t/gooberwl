@@ -6,8 +6,8 @@ const gpa = std.heap.c_allocator;
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 
-const Server = @import("Server.zig");
-const Workspace = @import("Workspace.zig");
+const Server = @import("../Server.zig");
+const Workspace = @import("../Workspace.zig");
 
 server: *Server,
 xdg_toplevel: *wlr.XdgToplevel,
@@ -86,11 +86,6 @@ fn onMap(listener: *wl.Listener(void)) void {
 
     _ = self.xdg_toplevel.setTiled(.{ .top = true, .bottom = true, .left = true, .right = true });
 
-    self.index = self.server.toplevels.items.len;
-    self.server.toplevels.append(gpa, self) catch {
-        std.log.err("faied to append toplevel!", .{});
-        return;
-    };
     self.server.focusView(self);
     self.scene_tree.node.lowerToBottom();
 
@@ -129,10 +124,13 @@ fn onDestroy(listener: *wl.Listener(void)) void {
 
 fn onRequestMove(
     listener: *wl.Listener(*wlr.XdgToplevel.event.Move),
-    _: *wlr.XdgToplevel.event.Move,
+    event: *wlr.XdgToplevel.event.Move,
 ) void {
     const self: *Self = @fieldParentPtr("on_request_move", listener);
-    self.server.seat.cursor.mode = .move;
+
+    if (event.serial == self.server.seat.cursor.click_serial) {
+        self.server.seat.cursor.mode = .move;
+    }
 }
 
 fn onRequestResize(

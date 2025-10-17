@@ -124,6 +124,7 @@ fn processMove(self: *Self) void {
     const view_at = server.viewAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
 
     focused.getWorkspace().swapTiles(focused, view_at.toplevel);
+    server.applyWorkspaceLayout(focused.workspace_id);
 }
 
 fn processPassthrough(self: *Self, time_msec: u32) void {
@@ -147,6 +148,7 @@ fn processResize(self: *Self) void {
         self.mode = .passthrough;
         return;
     };
+    const workspace = toplevel.getWorkspace();
 
     const output = server.output_layout.outputAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
     var layout_dirty = false;
@@ -154,21 +156,21 @@ fn processResize(self: *Self) void {
     if ((toplevel.index != 0 and self.resize_edges.left) or
         (toplevel.index == 0 and self.resize_edges.right))
     {
-        toplevel.getWorkspace().horizontal_ratio = self.wlr_cursor.x / @as(f64, @floatFromInt(output.width));
+        workspace.horizontal_ratio = self.wlr_cursor.x / @as(f64, @floatFromInt(output.width));
         layout_dirty = true;
     }
 
     if (toplevel.index > 1 and self.resize_edges.top) {
-        const prev = toplevel.getWorkspace().toplevels.items[toplevel.index - 1];
+        const prev = workspace.toplevels.items[toplevel.index - 1];
         prev.getWorkspace().resizeTile(prev, self.wlr_cursor.y);
         layout_dirty = true;
     }
 
     if (toplevel.index != 0 and
-        toplevel.index != toplevel.getWorkspace().toplevels.items.len - 1 and
+        toplevel.index != workspace.len() - 1 and
         self.resize_edges.bottom)
     {
-        toplevel.getWorkspace().resizeTile(toplevel, self.wlr_cursor.y);
+        workspace.resizeTile(toplevel, self.wlr_cursor.y);
         layout_dirty = true;
     }
 

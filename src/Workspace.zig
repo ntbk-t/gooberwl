@@ -1,13 +1,13 @@
 const Self = @This();
 
 const std = @import("std");
-const allocator = std.heap.c_allocator;
 const debug = std.debug;
+const allocator = std.heap.c_allocator;
 
 const wlr = @import("wlroots");
 
 const Output = @import("Output.zig");
-const Toplevel = @import("Toplevel.zig");
+const Toplevel = @import("xdg_shell/Toplevel.zig");
 
 width: i32 = 0,
 height: i32 = 0,
@@ -22,7 +22,6 @@ pub fn len(self: Self) usize {
 pub fn resize(self: *Self, width: i32, height: i32) void {
     self.width = width;
     self.height = height;
-    self.applyLayout();
 }
 
 pub fn appendTile(self: *Self, toplevel: *Toplevel) !void {
@@ -105,7 +104,7 @@ pub fn applyLayout(self: Self) void {
 
     if (toplevels.len == 1) {
         const toplevel = self.toplevels.items[0];
-        std.debug.assert(toplevel.index == 0);
+        debug.assert(toplevel.index == 0);
 
         toplevel.setRect(0, 0, self.width, self.height);
         toplevel.scene_tree.node.setEnabled(true);
@@ -114,14 +113,14 @@ pub fn applyLayout(self: Self) void {
 
     const primary_x = 0;
     const primary_y = 0;
-    const primary_width: u31 = @intFromFloat(
+    const primary_width: i32 = @intFromFloat(
         @as(f64, @floatFromInt(self.width)) *
             self.horizontal_ratio,
     );
     const primary_height = self.height;
 
     const primary_toplevel = toplevels[0];
-    std.debug.assert(primary_toplevel.index == 0);
+    debug.assert(primary_toplevel.index == 0);
     primary_toplevel.scene_tree.node.setEnabled(true);
     primary_toplevel.setRect(
         primary_x,
@@ -139,7 +138,7 @@ pub fn applyLayout(self: Self) void {
     for (secondary_toplevels, 0..) |toplevel, i| {
         toplevel.scene_tree.node.setEnabled(true);
 
-        std.debug.assert(toplevel.index == i + 1);
+        debug.assert(toplevel.index == i + 1);
 
         const scale = toplevel.scale / self.total_scale;
 

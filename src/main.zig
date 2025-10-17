@@ -9,7 +9,6 @@ const xkb = @import("xkbcommon");
 const gpa = std.heap.c_allocator;
 
 const Server = @import("Server.zig");
-const Toplevel = @import("Toplevel.zig");
 
 pub fn main() anyerror!void {
     wlr.log.init(.debug, null);
