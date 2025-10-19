@@ -269,14 +269,11 @@ fn updatePassthrough(self: *Self, time_msec: u32) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    if (server.getActiveWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y)) |toplevel| {
-        var box: wlr.Box = undefined;
-        toplevel.xdg_toplevel.base.surface.getExtents(&box);
-
+    if (server.viewAt(self.wlr_cursor.x, self.wlr_cursor.y)) |view_at| {
         seat.pointerNotifyEnter(
-            toplevel.xdg_toplevel.base.surface,
-            self.wlr_cursor.x - @as(f64, @floatFromInt(box.x)),
-            self.wlr_cursor.y - @as(f64, @floatFromInt(box.y)),
+            view_at.surface,
+            view_at.sx,
+            view_at.sy,
             time_msec,
         );
     } else {
