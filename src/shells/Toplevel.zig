@@ -20,6 +20,7 @@ on_request_move: wl.Listener(*wlr.XdgToplevel.event.Move) = .init(onRequestMove)
 on_request_resize: wl.Listener(*wlr.XdgToplevel.event.Resize) = .init(onRequestResize),
 
 workspace_id: u8,
+managed: bool = false,
 index: usize = 0,
 scale: f64 = 0.0,
 
@@ -55,22 +56,33 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
 
 pub fn getRect(self: *Self) struct { x: f64, y: f64, width: f64, height: f64 } {
     const workspace = self.getWorkspace();
+
+    const workspace_width: f64 = @floatFromInt(workspace.width);
+    const workspace_height: f64 = @floatFromInt(workspace.height);
+
+    if (self.index == 0) {
+        return .{
+            .x = 0,
+            .y = 0,
+            .width = workspace_width * workspace.horizontal_ratio,
+            .height = workspace_height,
+        };
+    }
+
     return .{
-        .x = @floatFromInt(self.scene_tree.node.x),
+        .x = workspace_width * workspace.horizontal_ratio,
         .y = @floatFromInt(self.scene_tree.node.y),
-        .width = @as(f64, @floatFromInt(workspace.width)) * if (self.index == 0)
-            workspace.horizontal_ratio
-        else
-            (1 - workspace.horizontal_ratio),
-        .height = @as(
-            f64,
-            @floatFromInt(workspace.height),
-        ) * self.scale / workspace.total_scale,
+        .width = workspace_width * (1 - workspace.horizontal_ratio),
+        .height = workspace_height * self.scale / workspace.total_scale,
     };
 }
 
 pub fn getWorkspace(self: *Self) *Workspace {
     return self.server.getWorkspace(self.workspace_id);
+}
+
+pub fn setPos(self: *Self, x: i32, y: i32) void {
+    self.scene_tree.node.setPosition(x, y);
 }
 
 pub fn setSize(self: *Self, width: i32, height: i32) void {
@@ -85,7 +97,7 @@ pub fn setSize(self: *Self, width: i32, height: i32) void {
 }
 
 pub fn setRect(self: *Self, x: i32, y: i32, width: i32, height: i32) void {
-    self.scene_tree.node.setPosition(x, y);
+    self.setPos(x, y);
     self.setSize(width, height);
 }
 

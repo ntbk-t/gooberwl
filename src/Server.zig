@@ -193,7 +193,7 @@ pub fn applyWorkspaceLayout(self: *Self, id: u8) void {
 }
 
 pub fn handleMousebind(self: *Self, button: u32, x: f64, y: f64) void {
-    const toplevel = if (self.viewAt(x, y)) |result| result.toplevel else return;
+    const toplevel = self.getActiveWorkspace().tileAt(x, y) orelse return;
 
     const rect = toplevel.getRect();
     const center_x = rect.x + rect.width / 2;

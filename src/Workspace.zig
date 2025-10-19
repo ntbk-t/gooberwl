@@ -25,6 +25,26 @@ pub fn resize(self: *Self, width: i32, height: i32) void {
     self.height = height;
 }
 
+pub fn tileAt(self: *Self, x: f64, y: f64) ?*Toplevel {
+    if (self.len() == 0) return null;
+
+    if (x < self.horizontal_ratio * @as(f64, @floatFromInt(self.width))) {
+        return self.toplevels.items[0];
+    }
+
+    var height: f64 = -self.scroll;
+    for (self.toplevels.items[1..]) |toplevel| {
+        const rect = toplevel.getRect();
+        height += rect.height;
+
+        if (y < height) {
+            return toplevel;
+        }
+    }
+
+    return null;
+}
+
 pub fn appendTile(self: *Self, toplevel: *Toplevel) !void {
     if (toplevel.scale == 0.0) {
         if (self.toplevels.items.len > 1) {
@@ -48,7 +68,8 @@ pub fn removeTile(self: *Self, to_remove: *Toplevel) void {
             self.total_scale -= self.toplevels.items[1].scale;
         }
     } else {
-        self.total_scale -= to_remove.scale;
+        const next = self.toplevels.items[to_remove.index - 1];
+        next.scale += to_remove.scale;
     }
 
     for (to_remove.index..self.len() - 1) |i| {
@@ -107,7 +128,9 @@ pub fn applyLayout(self: Self) void {
         const toplevel = self.toplevels.items[0];
         debug.assert(toplevel.index == 0);
 
-        toplevel.setRect(0, 0, self.width, self.height);
+        if (!toplevel.managed) {
+            toplevel.setRect(0, 0, self.width, self.height);
+        }
         toplevel.scene_tree.node.setEnabled(true);
         return;
     }
@@ -123,12 +146,14 @@ pub fn applyLayout(self: Self) void {
     const primary_toplevel = toplevels[0];
     debug.assert(primary_toplevel.index == 0);
     primary_toplevel.scene_tree.node.setEnabled(true);
-    primary_toplevel.setRect(
-        primary_x,
-        primary_y,
-        primary_width,
-        primary_height,
-    );
+    if (!primary_toplevel.managed) {
+        primary_toplevel.setRect(
+            primary_x,
+            primary_y,
+            primary_width,
+            primary_height,
+        );
+    }
 
     const secondary_toplevels = toplevels[1..];
 
@@ -151,12 +176,14 @@ pub fn applyLayout(self: Self) void {
                 @floatFromInt(self.height),
             ) * scale)), toplevel.xdg_toplevel.current.min_height);
 
-        toplevel.setRect(
-            @intCast(secondary_x),
-            secondary_y,
-            secondary_width,
-            secondary_height,
-        );
+        if (!toplevel.managed) {
+            toplevel.setRect(
+                @intCast(secondary_x),
+                secondary_y,
+                secondary_width,
+                secondary_height,
+            );
+        }
         secondary_y += secondary_height;
     }
 }

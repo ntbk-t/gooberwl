@@ -11,18 +11,22 @@ const Server = @import("../Server.zig");
 const Toplevel = @import("../shells/Toplevel.zig");
 
 const State = union(enum) {
-    passthrough: void,
-    move: struct {
+    passthrough: Passthrough,
+    move: Move,
+    resize: Resize,
+
+    const Passthrough = void;
+    const Move = struct {
         toplevel: *Toplevel,
         x_offset: f64,
         y_offset: f64,
-    },
-    resize: struct {
+    };
+    const Resize = struct {
         toplevel: *Toplevel,
         edges: wlr.Edges,
         x_offset: f64,
         y_offset: f64,
-    },
+    };
 };
 
 wlr_cursor: *wlr.Cursor,
@@ -100,14 +104,14 @@ fn onButton(
                 }
             }
             self.click_serial = seat.pointerNotifyButton(event);
-            if (server.viewAt(self.wlr_cursor.x, self.wlr_cursor.y)) |res| {
-                server.focusView(res.toplevel);
+            if (server.getActiveWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y)) |toplevel| {
+                server.focusView(toplevel);
             }
         },
         .released => {
             switch (self.state) {
                 .passthrough => {},
-                .move => self.endMove(event.time_msec),
+                .move => |move| self.endMove(move.toplevel, event.time_msec),
                 .resize => seat.pointerNotifyExit(),
             }
             self.state = .{ .passthrough = {} };
@@ -144,8 +148,8 @@ fn onFrame(listener: *wl.Listener(*wlr.Cursor), _: *wlr.Cursor) void {
 fn processMotion(self: *Self, time_msec: u32) void {
     switch (self.state) {
         .passthrough => self.updatePassthrough(time_msec),
-        .move => {},
-        .resize => |resize| self.updateResize(resize.toplevel, resize.x_offset, resize.y_offset, resize.edges),
+        .move => |state| self.updateMove(state),
+        .resize => |state| self.updateResize(state),
     }
 }
 
@@ -156,13 +160,42 @@ pub fn startMove(self: *Self, toplevel: *Toplevel) void {
     seat.pointerNotifyExit();
     self.wlr_cursor.setXcursor(server.cursor_mgr, "hand1");
 
+    const rect = toplevel.getRect();
+
+    const cx: f64 = rect.x - self.wlr_cursor.x;
+    const cy: f64 = rect.y - self.wlr_cursor.y;
+
+    const new_size: struct { x: f64, y: f64 } = if (rect.width > rect.height)
+        .{ .x = 256, .y = 256 * (rect.height / rect.width) }
+    else
+        .{ .x = 256 * (rect.width / rect.height), .y = 256 };
+
+    const x_offset = cx * new_size.x / rect.width;
+    const y_offset = cy * new_size.y / rect.width;
+
+    toplevel.managed = true;
+    toplevel.setRect(
+        @intFromFloat(self.wlr_cursor.x + x_offset),
+        @intFromFloat(self.wlr_cursor.y + y_offset),
+        @intFromFloat(new_size.x),
+        @intFromFloat(new_size.y),
+    );
+    toplevel.scene_tree.node.raiseToTop();
+
     self.state = .{
         .move = .{
             .toplevel = toplevel,
-            .x_offset = self.wlr_cursor.x - @as(f64, @floatFromInt(toplevel.scene_tree.node.x)),
-            .y_offset = self.wlr_cursor.y - @as(f64, @floatFromInt(toplevel.scene_tree.node.y)),
+            .x_offset = x_offset,
+            .y_offset = y_offset,
         },
     };
+}
+
+pub fn updateMove(self: *Self, state: State.Move) void {
+    state.toplevel.setPos(
+        @intFromFloat(self.wlr_cursor.x + state.x_offset),
+        @intFromFloat(self.wlr_cursor.y + state.y_offset),
+    );
 }
 
 pub fn startResize(self: *Self, toplevel: *Toplevel, edges: wlr.Edges) void {
@@ -219,15 +252,15 @@ pub fn setSurface(self: *Self, surface: ?*wlr.Surface, hotspot_x: i32, hotspot_y
     }
 }
 
-fn endMove(self: *Self, time_msec: u32) void {
+fn endMove(self: *Self, toplevel: *Toplevel, time_msec: u32) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    const focused = seat.focused_toplevel orelse return;
-    const view_at = server.viewAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
+    const swap_with = server.getActiveWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
 
-    focused.getWorkspace().swapTiles(focused, view_at.toplevel);
-    server.applyWorkspaceLayout(focused.workspace_id);
+    toplevel.managed = false;
+    toplevel.getWorkspace().swapTiles(toplevel, swap_with);
+    server.applyWorkspaceLayout(toplevel.workspace_id);
 
     self.updatePassthrough(time_msec);
 }
@@ -236,47 +269,55 @@ fn updatePassthrough(self: *Self, time_msec: u32) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    if (server.viewAt(self.wlr_cursor.x, self.wlr_cursor.y)) |res| {
-        seat.pointerNotifyEnter(res.surface, res.sx, res.sy, time_msec);
+    if (server.getActiveWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y)) |toplevel| {
+        var box: wlr.Box = undefined;
+        toplevel.xdg_toplevel.base.surface.getExtents(&box);
+
+        seat.pointerNotifyEnter(
+            toplevel.xdg_toplevel.base.surface,
+            self.wlr_cursor.x - @as(f64, @floatFromInt(box.x)),
+            self.wlr_cursor.y - @as(f64, @floatFromInt(box.y)),
+            time_msec,
+        );
     } else {
         self.wlr_cursor.setXcursor(server.cursor_mgr, "default");
         seat.pointerNotifyExit();
     }
 }
 
-fn updateResize(self: *Self, toplevel: *Toplevel, x_offset: f64, y_offset: f64, edges: wlr.Edges) void {
+fn updateResize(self: *Self, state: State.Resize) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    const workspace = toplevel.getWorkspace();
+    const workspace = state.toplevel.getWorkspace();
 
     const output = server.output_layout.outputAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
     var layout_dirty = false;
 
-    const x = self.wlr_cursor.x + x_offset;
-    const y = self.wlr_cursor.y + y_offset;
-    if ((toplevel.index != 0 and edges.left) or
-        (toplevel.index == 0 and edges.right))
+    const x = self.wlr_cursor.x + state.x_offset;
+    const y = self.wlr_cursor.y + state.y_offset;
+    if ((state.toplevel.index != 0 and state.edges.left) or
+        (state.toplevel.index == 0 and state.edges.right))
     {
         workspace.horizontal_ratio = x / @as(f64, @floatFromInt(output.width));
         layout_dirty = true;
     }
 
-    if (toplevel.index > 1 and edges.top) {
-        const prev = workspace.toplevels.items[toplevel.index - 1];
+    if (state.toplevel.index > 1 and state.edges.top) {
+        const prev = workspace.toplevels.items[state.toplevel.index - 1];
         prev.getWorkspace().resizeTile(prev, y);
         layout_dirty = true;
     }
 
-    if (toplevel.index != 0 and
-        toplevel.index != workspace.len() - 1 and
-        edges.bottom)
+    if (state.toplevel.index != 0 and
+        state.toplevel.index != workspace.len() - 1 and
+        state.edges.bottom)
     {
-        workspace.resizeTile(toplevel, y);
+        workspace.resizeTile(state.toplevel, y);
         layout_dirty = true;
     }
 
     if (layout_dirty == true) {
-        server.applyWorkspaceLayout(toplevel.workspace_id);
+        server.applyWorkspaceLayout(state.toplevel.workspace_id);
     }
 }
