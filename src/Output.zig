@@ -1,3 +1,5 @@
+const Self = @This();
+
 const std = @import("std");
 const posix = std.posix;
 const gpa = std.heap.c_allocator;
@@ -5,10 +7,11 @@ const gpa = std.heap.c_allocator;
 const wl = @import("wayland").server.wl;
 const wlr = @import("wlroots");
 
-const Output = @import("Output.zig");
 const Server = @import("Server.zig");
+const Workspace = @import("Workspace.zig");
 
 server: *Server,
+workspace: *Workspace,
 wlr_output: *wlr.Output,
 
 frame: wl.Listener(*wlr.Output) = .init(handleFrame),
@@ -28,12 +31,25 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     }
     if (!wlr_output.commitState(&state)) return;
 
-    const output = try gpa.create(Output);
+    const workspace = for (&server.workspaces) |*workspace| {
+        if (workspace.output == null) {
+            break workspace;
+        }
+    } else {
+        std.log.err("no workspaces left to provide to output \"{s}\"!", .{wlr_output.name});
+        return error.NoWorkspaces;
+    };
+
+    const output = try gpa.create(Self);
     errdefer gpa.destroy(output);
     output.* = .{
         .server = server,
+        .workspace = workspace,
         .wlr_output = wlr_output,
     };
+
+    wlr_output.data = @ptrCast(output);
+    workspace.output = output;
 
     const layout_output = try server.output_layout.addAuto(wlr_output);
 
@@ -43,14 +59,10 @@ pub fn create(server: *Server, wlr_output: *wlr.Output) !void {
     wlr_output.events.frame.add(&output.frame);
     wlr_output.events.request_state.add(&output.request_state);
     wlr_output.events.destroy.add(&output.destroy);
-
-    const workspace = server.activeWorkspace();
-    workspace.resize(output.wlr_output.width, output.wlr_output.height);
-    workspace.applyLayout();
 }
 
 fn handleFrame(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
-    const output: *Output = @fieldParentPtr("frame", listener);
+    const output: *Self = @fieldParentPtr("frame", listener);
 
     const scene_output = output.server.scene.getSceneOutput(output.wlr_output).?;
     _ = scene_output.commit(null);
@@ -63,21 +75,18 @@ fn handleRequestState(
     listener: *wl.Listener(*wlr.Output.event.RequestState),
     event: *wlr.Output.event.RequestState,
 ) void {
-    const output: *Output = @fieldParentPtr("request_state", listener);
+    const self: *Self = @fieldParentPtr("request_state", listener);
 
-    _ = output.wlr_output.commitState(event.state);
-
-    const workspace = output.server.activeWorkspace();
-    workspace.resize(output.wlr_output.width, output.wlr_output.height);
-    workspace.applyLayout();
+    _ = self.wlr_output.commitState(event.state);
+    self.workspace.applyLayout();
 }
 
 fn handleDestroy(listener: *wl.Listener(*wlr.Output), _: *wlr.Output) void {
-    const output: *Output = @fieldParentPtr("destroy", listener);
+    const self: *Self = @fieldParentPtr("destroy", listener);
 
-    output.frame.link.remove();
-    output.request_state.link.remove();
-    output.destroy.link.remove();
+    self.frame.link.remove();
+    self.request_state.link.remove();
+    self.destroy.link.remove();
 
-    gpa.destroy(output);
+    gpa.destroy(self);
 }

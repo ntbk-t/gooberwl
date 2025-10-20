@@ -167,27 +167,41 @@ fn newInput(listener: *wl.Listener(*wlr.InputDevice), device: *wlr.InputDevice) 
     self.seat.addInput(device);
 }
 
-pub fn activeWorkspace(self: *Self) *Workspace {
-    return &self.workspaces[self.active_workspace];
-}
-
-pub fn setWorkspace(self: *Self, id: u8) void {
-    self.activeWorkspace().hide();
-    self.active_workspace = id;
-
-    const output = self.output_layout.outputAt(0, 0) orelse unreachable;
-    self.activeWorkspace().resize(output.width, output.height);
-    self.activeWorkspace().applyLayout();
-}
-
 pub fn applyWorkspaceLayout(self: *Self, id: u8) void {
     if (self.active_workspace == id) {
         self.workspaces[id].applyLayout();
     }
 }
 
+pub fn getOutputAtCursor(self: *Self) ?*Output {
+    const wlr_output = self.output_layout.outputAt(
+        self.seat.cursor.wlr_cursor.x,
+        self.seat.cursor.wlr_cursor.y,
+    ) orelse return null;
+
+    return @ptrCast(@alignCast(wlr_output.data orelse unreachable));
+}
+
+fn setWorkspace(self: *Self, id: u8) void {
+    const output = self.getOutputAtCursor() orelse return;
+    const new_workspace = &self.workspaces[id];
+
+    if (new_workspace.output) |other_output| {
+        other_output.workspace = output.workspace;
+        output.workspace.output = new_workspace.output;
+    } else {
+        output.workspace.output = null;
+    }
+    output.workspace.applyLayout();
+
+    output.workspace = &self.workspaces[id];
+    output.workspace.output = output;
+    output.workspace.applyLayout();
+}
+
 pub fn handleMousebind(self: *Self, button: u32, x: f64, y: f64) void {
-    const toplevel = self.activeWorkspace().tileAt(x, y) orelse return;
+    const output: *Output = self.getOutputAtCursor() orelse return;
+    const toplevel = output.workspace.tileAt(x, y) orelse return;
 
     const rect = toplevel.getRect();
     const center_x = rect.x + rect.width / 2;

@@ -9,8 +9,7 @@ const wlr = @import("wlroots");
 const Output = @import("Output.zig");
 const Toplevel = @import("shells/Toplevel.zig");
 
-width: i32 = 0,
-height: i32 = 0,
+output: ?*Output = null,
 horizontal_ratio: f64 = 2.0 / 3.0,
 toplevels: std.ArrayList(*Toplevel) = .empty,
 scroll: f64 = 0.0,
@@ -20,15 +19,13 @@ pub fn len(self: Self) usize {
     return self.toplevels.items.len;
 }
 
-pub fn resize(self: *Self, width: i32, height: i32) void {
-    self.width = width;
-    self.height = height;
-}
-
 pub fn tileAt(self: *Self, x: f64, y: f64) ?*Toplevel {
+    const output = self.output orelse return null;
+    const width = output.wlr_output.width;
+
     if (self.len() == 0) return null;
 
-    if (x < self.horizontal_ratio * @as(f64, @floatFromInt(self.width))) {
+    if (x < self.horizontal_ratio * @as(f64, @floatFromInt(width))) {
         return self.toplevels.items[0];
     }
 
@@ -97,27 +94,33 @@ pub fn swapTiles(self: Self, a: *Toplevel, b: *Toplevel) void {
 }
 
 pub fn resizeTile(self: Self, toplevel: *Toplevel, to_y: f64) void {
+    const output = self.output orelse unreachable;
+    const height = output.wlr_output.height;
+
     const next = self.toplevels.items[toplevel.index + 1];
     const top: f64 = @floatFromInt(toplevel.scene_tree.node.y);
     const bottom = top + @as(
         f64,
-        @floatFromInt(self.height),
+        @floatFromInt(height),
     ) * toplevel.scale / self.total_scale;
 
-    const resize_by = (to_y - bottom) * self.total_scale / @as(f64, @floatFromInt(self.height));
+    const resize_by = (to_y - bottom) * self.total_scale / @as(f64, @floatFromInt(height));
 
     toplevel.scale += resize_by;
     next.scale -= resize_by;
 }
 
-pub fn hide(self: Self) void {
-    for (self.toplevels.items) |toplevel| {
-        toplevel.setSize(0, 0);
-        toplevel.scene_tree.node.setEnabled(false);
-    }
-}
-
 pub fn applyLayout(self: Self) void {
+    const output = self.output orelse {
+        for (self.toplevels.items) |toplevel| {
+            toplevel.setSize(0, 0);
+            toplevel.scene_tree.node.setEnabled(false);
+        }
+        return;
+    };
+    const width = output.wlr_output.width;
+    const height = output.wlr_output.height;
+
     const toplevels = self.toplevels.items;
 
     if (toplevels.len == 0) {
@@ -129,7 +132,7 @@ pub fn applyLayout(self: Self) void {
         debug.assert(toplevel.index == 0);
 
         if (!toplevel.managed) {
-            toplevel.setRect(0, 0, self.width, self.height);
+            toplevel.setRect(0, 0, width, height);
         }
         toplevel.scene_tree.node.setEnabled(true);
         return;
@@ -138,10 +141,10 @@ pub fn applyLayout(self: Self) void {
     const primary_x = 0;
     const primary_y = 0;
     const primary_width: i32 = @intFromFloat(
-        @as(f64, @floatFromInt(self.width)) *
+        @as(f64, @floatFromInt(width)) *
             self.horizontal_ratio,
     );
-    const primary_height = self.height;
+    const primary_height = height;
 
     const primary_toplevel = toplevels[0];
     debug.assert(primary_toplevel.index == 0);
@@ -158,7 +161,7 @@ pub fn applyLayout(self: Self) void {
     const secondary_toplevels = toplevels[1..];
 
     const secondary_x = primary_x + primary_width + 1;
-    const secondary_width = self.width - secondary_x;
+    const secondary_width = width - secondary_x;
 
     var secondary_y: i32 = @intFromFloat(-self.scroll);
     for (secondary_toplevels, 0..) |toplevel, i| {
@@ -173,7 +176,7 @@ pub fn applyLayout(self: Self) void {
         else
             @as(i32, @intFromFloat(@as(
                 f64,
-                @floatFromInt(self.height),
+                @floatFromInt(height),
             ) * scale)), toplevel.xdg_toplevel.current.min_height);
 
         if (!toplevel.managed) {

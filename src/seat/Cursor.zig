@@ -94,6 +94,7 @@ fn onButton(
     const self: *Self = @fieldParentPtr("on_button", listener);
     const seat = self.getSeat();
     const server = seat.getServer();
+    const output = server.getOutputAtCursor() orelse return;
 
     switch (event.state) {
         .pressed => {
@@ -104,7 +105,7 @@ fn onButton(
                 }
             }
             self.click_serial = seat.pointerNotifyButton(event);
-            if (server.activeWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y)) |toplevel| {
+            if (output.workspace.tileAt(self.wlr_cursor.x, self.wlr_cursor.y)) |toplevel| {
                 server.focusView(toplevel);
             }
         },
@@ -128,11 +129,12 @@ fn onAxis(
     const self: *Self = @fieldParentPtr("on_axis", listener);
     const seat = self.getSeat();
     const server = seat.getServer();
+    const output = server.getOutputAtCursor() orelse return;
 
     if (seat.wlr_seat.getKeyboard()) |keyboard| {
         if (keyboard.getModifiers().alt) {
-            server.activeWorkspace().scroll += event.delta;
-            server.activeWorkspace().applyLayout();
+            output.workspace.scroll += event.delta;
+            output.workspace.applyLayout();
             return;
         }
     }
@@ -253,14 +255,11 @@ pub fn setSurface(self: *Self, surface: ?*wlr.Surface, hotspot_x: i32, hotspot_y
 }
 
 fn endMove(self: *Self, toplevel: *Toplevel, time_msec: u32) void {
-    const seat = self.getSeat();
-    const server = seat.getServer();
-
-    const swap_with = server.activeWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
+    const swap_with = toplevel.workspace.tileAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
 
     toplevel.managed = false;
-    toplevel.getWorkspace().swapTiles(toplevel, swap_with);
-    server.applyWorkspaceLayout(toplevel.workspace_id);
+    toplevel.workspace.swapTiles(toplevel, swap_with);
+    toplevel.workspace.applyLayout();
 
     self.updatePassthrough(time_msec);
 }
@@ -286,7 +285,7 @@ fn updateResize(self: *Self, state: State.Resize) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    const workspace = state.toplevel.getWorkspace();
+    const workspace = state.toplevel.workspace;
 
     const output = server.output_layout.outputAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
     var layout_dirty = false;
@@ -302,7 +301,7 @@ fn updateResize(self: *Self, state: State.Resize) void {
 
     if (state.toplevel.index > 1 and state.edges.top) {
         const prev = workspace.toplevels.items[state.toplevel.index - 1];
-        prev.getWorkspace().resizeTile(prev, y);
+        prev.workspace.resizeTile(prev, y);
         layout_dirty = true;
     }
 
@@ -315,6 +314,6 @@ fn updateResize(self: *Self, state: State.Resize) void {
     }
 
     if (layout_dirty == true) {
-        server.applyWorkspaceLayout(state.toplevel.workspace_id);
+        state.toplevel.workspace.applyLayout();
     }
 }

@@ -19,13 +19,19 @@ on_destroy: wl.Listener(void) = .init(onDestroy),
 on_request_move: wl.Listener(*wlr.XdgToplevel.event.Move) = .init(onRequestMove),
 on_request_resize: wl.Listener(*wlr.XdgToplevel.event.Resize) = .init(onRequestResize),
 
-workspace_id: u8,
+workspace: *Workspace,
 managed: bool = false,
 index: usize = 0,
 scale: f64 = 0.0,
 
 pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
     const xdg_surface = xdg_toplevel.base;
+
+    const output = server.getOutputAtCursor() orelse {
+        std.log.err("can't find a suitable output to place new toplevel!", .{});
+        return error.NoOutput;
+    };
+    const workspace = output.workspace;
 
     // Don't add the toplevel to self.toplevels until it is mapped
     const toplevel = gpa.create(Self) catch |err| {
@@ -41,7 +47,7 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
             std.log.err("failed to create scene tree node for toplevel!", .{});
             return error.CreateSceneXdgSurface;
         },
-        .workspace_id = server.active_workspace,
+        .workspace = workspace,
     };
     toplevel.scene_tree.node.data = toplevel;
     xdg_surface.data = toplevel.scene_tree;
@@ -55,10 +61,11 @@ pub fn create(server: *Server, xdg_toplevel: *wlr.XdgToplevel) !void {
 }
 
 pub fn getRect(self: *Self) struct { x: f64, y: f64, width: f64, height: f64 } {
-    const workspace = self.getWorkspace();
+    const workspace = self.workspace;
+    const output = workspace.output orelse return .{ .x = 0, .y = 0, .width = 0, .height = 0 };
 
-    const workspace_width: f64 = @floatFromInt(workspace.width);
-    const workspace_height: f64 = @floatFromInt(workspace.height);
+    const workspace_width: f64 = @floatFromInt(output.wlr_output.width);
+    const workspace_height: f64 = @floatFromInt(output.wlr_output.height);
 
     if (self.index == 0) {
         return .{
@@ -75,10 +82,6 @@ pub fn getRect(self: *Self) struct { x: f64, y: f64, width: f64, height: f64 } {
         .width = workspace_width * (1 - workspace.horizontal_ratio),
         .height = workspace_height * self.scale / workspace.total_scale,
     };
-}
-
-pub fn getWorkspace(self: *Self) *Workspace {
-    return &self.server.workspaces[self.workspace_id];
 }
 
 pub fn setPos(self: *Self, x: i32, y: i32) void {
@@ -110,7 +113,6 @@ fn onCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
 
 fn onMap(listener: *wl.Listener(void)) void {
     const self: *Self = @fieldParentPtr("on_map", listener);
-    const server = self.server;
 
     _ = self.xdg_toplevel.setTiled(
         .{ .top = true, .bottom = true, .left = true, .right = true },
@@ -119,10 +121,10 @@ fn onMap(listener: *wl.Listener(void)) void {
     self.server.focusView(self);
     self.scene_tree.node.lowerToBottom();
 
-    server.activeWorkspace().appendTile(self) catch |err| {
+    self.workspace.appendTile(self) catch |err| {
         std.log.err("failed to append toplevel! (err: {})", .{err});
     };
-    server.applyWorkspaceLayout(self.workspace_id);
+    self.workspace.applyLayout();
 }
 
 fn onUnmap(listener: *wl.Listener(void)) void {
@@ -131,8 +133,8 @@ fn onUnmap(listener: *wl.Listener(void)) void {
     if (self == self.server.seat.focused_toplevel) {
         self.server.seat.focused_toplevel = null;
     }
-    self.getWorkspace().removeTile(self);
-    self.server.applyWorkspaceLayout(self.workspace_id);
+    self.workspace.removeTile(self);
+    self.workspace.applyLayout();
 }
 
 fn onDestroy(listener: *wl.Listener(void)) void {
