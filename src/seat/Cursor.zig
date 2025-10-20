@@ -104,7 +104,7 @@ fn onButton(
                 }
             }
             self.click_serial = seat.pointerNotifyButton(event);
-            if (server.getActiveWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y)) |toplevel| {
+            if (server.activeWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y)) |toplevel| {
                 server.focusView(toplevel);
             }
         },
@@ -131,8 +131,8 @@ fn onAxis(
 
     if (seat.wlr_seat.getKeyboard()) |keyboard| {
         if (keyboard.getModifiers().alt) {
-            server.getActiveWorkspace().scroll += event.delta;
-            server.getActiveWorkspace().applyLayout();
+            server.activeWorkspace().scroll += event.delta;
+            server.activeWorkspace().applyLayout();
             return;
         }
     }
@@ -256,7 +256,7 @@ fn endMove(self: *Self, toplevel: *Toplevel, time_msec: u32) void {
     const seat = self.getSeat();
     const server = seat.getServer();
 
-    const swap_with = server.getActiveWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
+    const swap_with = server.activeWorkspace().tileAt(self.wlr_cursor.x, self.wlr_cursor.y) orelse return;
 
     toplevel.managed = false;
     toplevel.getWorkspace().swapTiles(toplevel, swap_with);

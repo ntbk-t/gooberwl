@@ -167,33 +167,27 @@ fn newInput(listener: *wl.Listener(*wlr.InputDevice), device: *wlr.InputDevice) 
     self.seat.addInput(device);
 }
 
-pub fn getWorkspace(self: *Self, id: u8) *Workspace {
-    return &self.workspaces[id];
-}
-
-pub fn getActiveWorkspace(self: *Self) *Workspace {
-    return self.getWorkspace(self.active_workspace);
+pub fn activeWorkspace(self: *Self) *Workspace {
+    return &self.workspaces[self.active_workspace];
 }
 
 pub fn setWorkspace(self: *Self, id: u8) void {
-    debug.assert(id < 10);
-
-    self.getActiveWorkspace().hide();
+    self.activeWorkspace().hide();
     self.active_workspace = id;
 
     const output = self.output_layout.outputAt(0, 0) orelse unreachable;
-    self.getActiveWorkspace().resize(output.width, output.height);
-    self.getActiveWorkspace().applyLayout();
+    self.activeWorkspace().resize(output.width, output.height);
+    self.activeWorkspace().applyLayout();
 }
 
 pub fn applyWorkspaceLayout(self: *Self, id: u8) void {
     if (self.active_workspace == id) {
-        self.getWorkspace(id).applyLayout();
+        self.workspaces[id].applyLayout();
     }
 }
 
 pub fn handleMousebind(self: *Self, button: u32, x: f64, y: f64) void {
-    const toplevel = self.getActiveWorkspace().tileAt(x, y) orelse return;
+    const toplevel = self.activeWorkspace().tileAt(x, y) orelse return;
 
     const rect = toplevel.getRect();
     const center_x = rect.x + rect.width / 2;

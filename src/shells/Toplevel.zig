@@ -78,7 +78,7 @@ pub fn getRect(self: *Self) struct { x: f64, y: f64, width: f64, height: f64 } {
 }
 
 pub fn getWorkspace(self: *Self) *Workspace {
-    return self.server.getWorkspace(self.workspace_id);
+    return &self.server.workspaces[self.workspace_id];
 }
 
 pub fn setPos(self: *Self, x: i32, y: i32) void {
@@ -119,7 +119,7 @@ fn onMap(listener: *wl.Listener(void)) void {
     self.server.focusView(self);
     self.scene_tree.node.lowerToBottom();
 
-    server.getActiveWorkspace().appendTile(self) catch |err| {
+    server.activeWorkspace().appendTile(self) catch |err| {
         std.log.err("failed to append toplevel! (err: {})", .{err});
     };
     server.applyWorkspaceLayout(self.workspace_id);
